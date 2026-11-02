@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16" />
+      <stop offset="50%" stop-color="#172554" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+    <linearGradient id="pages" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#dbeafe" />
+    </linearGradient>
+    <linearGradient id="aiGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#818cf8" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+    <linearGradient id="spark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef08a" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded App Tile -->
+  <rect width="512" height="512" rx="116" fill="url(#bg)" />
+  <rect x="18" y="18" width="476" height="476" rx="98" fill="none" stroke="#60a5fa" stroke-opacity="0.2" stroke-width="4" />
+
+  <!-- Ambient AI Halo -->
+  <circle cx="256" cy="210" r="130" fill="#38bdf8" opacity="0.12" />
+
+  <!-- Back Book Cover / Shadow Layer -->
+  <path d="M96 196 C148 176, 210 186, 256 214 C302 186, 364 176, 416 196 L416 376 C364 356, 302 366, 256 394 C210 366, 148 356, 96 376 Z" fill="url(#aiGlow)" opacity="0.35" />
+
+  <!-- Open E-Book Left & Right Pages -->
+  <path d="M108 180 C158 160, 214 170, 256 198 L256 374 C214 348, 158 338, 108 356 Z" fill="url(#pages)" />
+  <path d="M404 180 C354 160, 298 170, 256 198 L256 374 C298 348, 354 338, 404 356 Z" fill="#eff6ff" />
+
+  <!-- Center Spine Accent -->
+  <path d="M256 196 L256 376" stroke="#1e3a8a" stroke-width="8" stroke-linecap="round" opacity="0.35" />
+
+  <!-- Stylized Digital Lines on Left Page ("E") -->
+  <path d="M144 226 H220" stroke="#2563eb" stroke-width="12" stroke-linecap="round" />
+  <path d="M144 264 H204" stroke="#3b82f6" stroke-width="12" stroke-linecap="round" />
+  <path d="M144 302 H220" stroke="#2563eb" stroke-width="12" stroke-linecap="round" />
+
+  <!-- AI Neural Nodes on Right Page -->
+  <path d="M292 264 H340 L362 234" fill="none" stroke="#2563eb" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M316 264 L354 302" fill="none" stroke="#0284c7" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="364" cy="232" r="12" fill="#0284c7" />
+  <circle cx="356" cy="304" r="12" fill="#f59e0b" />
+
+  <!-- Rising AI Spark Star -->
+  <path d="M256 76 C262 114, 274 126, 312 132 C274 138, 262 150, 256 188 C250 150, 238 138, 200 132 C238 126, 250 114, 256 76 Z" fill="url(#spark)" />
+  <circle cx="332" cy="96" r="8" fill="#fef08a" />
+  <circle cx="184" cy="104" r="6" fill="#38bdf8" />
+
+  <!-- Bottom EBOOK.AI Wordmark Pill -->
+  <rect x="146" y="406" width="220" height="44" rx="22" fill="#0f172a" fill-opacity="0.75" stroke="#38bdf8" stroke-opacity="0.4" stroke-width="2" />
+  <text x="256" y="435" text-anchor="middle" fill="#f8fafc" font-family="Inter, system-ui, -apple-system, sans-serif" font-size="24" font-weight="800" letter-spacing="3">EBOOK<tspan fill="#38bdf8">.AI</tspan></text>
+</svg>
+
