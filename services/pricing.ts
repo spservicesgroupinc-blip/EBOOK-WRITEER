@@ -25,8 +25,8 @@ export interface CostSummary {
   selectedCoverModel: string;
 }
 
-export const DEFAULT_TEXT_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
-export const DEFAULT_COVER_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+export const DEFAULT_TEXT_MODEL = 'google/gemma-4-26b-a4b-it:free';
+export const DEFAULT_COVER_MODEL = 'instant-editorial-svg';
 
 export const DEFAULT_FREE_MODELS: FreeModelOption[] = [
   {

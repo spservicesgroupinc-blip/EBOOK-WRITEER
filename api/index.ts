@@ -1,6 +1,6 @@
 import fs from 'fs';
 
-const OPENROUTER_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+const OPENROUTER_MODEL = 'google/gemma-4-26b-a4b-it:free';
 
 const resolveOpenRouterApiKey = (): string => {
   const candidates = [
@@ -385,18 +385,29 @@ async function runOpenRouterChat(userContent: string, requestedModel?: string) {
   const candidateModels = Array.from(
     new Set([
       primaryModel,
-      'google/gemma-4-31b-it:free',
       'google/gemma-4-26b-a4b-it:free',
-      OPENROUTER_MODEL,
+      'nvidia/nemotron-3.5-lightning:free',
+      'google/gemma-4-31b-it:free',
       'openrouter/free',
     ])
   );
 
+  const startTime = Date.now();
   let lastErr: any;
-  for (const currentModel of candidateModels) {
+
+  for (let i = 0; i < candidateModels.length; i++) {
+    // Stop trying more models if we're approaching Vercel's serverless timeout
+    if (Date.now() - startTime > 38000) {
+      break;
+    }
+
+    const currentModel = candidateModels[i];
+    // Give the first model 16s and subsequent fallback models 12s so we never hit a 504 timeout
+    const perModelTimeoutMs = i === 0 ? 16000 : 12000;
+
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 45000);
+      const timeout = setTimeout(() => controller.abort(), perModelTimeoutMs);
 
       const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -414,6 +425,13 @@ async function runOpenRouterChat(userContent: string, requestedModel?: string) {
               content: userContent,
             },
           ],
+          provider: {
+            sort: 'throughput',
+          },
+          reasoning: {
+            effort: 'low',
+            exclude: true,
+          },
           stream: false,
         }),
         signal: controller.signal,
@@ -653,6 +671,15 @@ export default async function handler(req: any, res: any) {
         status: 'ok',
         hasApiKey: Boolean(resolveOpenRouterApiKey()),
         environment: process.env.VERCEL ? 'vercel' : process.env.NODE_ENV || 'development',
+      });
+    }
+
+    // Fast token endpoint (<2ms) so client can bypass Vercel serverless timeout for long generations
+    if (url.includes('/client-config')) {
+      const apiKey = resolveOpenRouterApiKey();
+      return sendJson(res, 200, {
+        apiKey,
+        defaultModel: OPENROUTER_MODEL,
       });
     }
 
