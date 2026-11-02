@@ -32,6 +32,30 @@ export const formatImageSrc = (imgData?: string): string => {
   return `data:image/jpeg;base64,${trimmed}`;
 };
 
+async function fetchApiJson(url: string, payload: Record<string, any>): Promise<any> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  const rawText = await response.text();
+  let data: any;
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    throw new Error(
+      `Server error (${response.status}): ${rawText.slice(0, 140).trim() || 'Invalid response from API endpoint'}`
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(data?.error || `Request failed with status ${response.status}`);
+  }
+
+  return data;
+}
+
 export interface TrendResult {
   content: string;
   sources: { title: string; uri: string }[];
@@ -39,16 +63,7 @@ export interface TrendResult {
 
 export const researchBookTrends = async (): Promise<TrendResult> => {
   const model = PricingService.getSelectedTextModel();
-  const response = await fetch('/api/gemini/trends', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model }),
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || 'Failed to research trends.');
-  }
+  const data = await fetchApiJson('/api/gemini/trends', { model });
 
   if (data.usage) {
     PricingService.trackUsage(
@@ -66,16 +81,7 @@ export const researchBookTrends = async (): Promise<TrendResult> => {
 
 export const transcribeAudio = async (base64Audio: string, mimeType: string): Promise<string> => {
   const model = PricingService.getSelectedTextModel();
-  const response = await fetch('/api/gemini/transcribe', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ base64Audio, mimeType, model }),
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || 'Failed to transcribe audio.');
-  }
+  const data = await fetchApiJson('/api/gemini/transcribe', { base64Audio, mimeType, model });
 
   if (data.usage) {
     PricingService.trackUsage(
@@ -142,16 +148,7 @@ export const generateOutline = async (
     }
   }
 
-  const response = await fetch('/api/gemini/outline', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ parts, model }),
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || 'Failed to generate outline.');
-  }
+  const data = await fetchApiJson('/api/gemini/outline', { parts, model });
 
   if (data.usage) {
     PricingService.trackUsage(
@@ -176,14 +173,8 @@ export const generateImage = async (
   customModel?: string
 ): Promise<string> => {
   const model = customModel || PricingService.getSelectedCoverModel();
-  const response = await fetch('/api/gemini/image', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, aspectRatio, model }),
-  });
-
-  const data = await response.json();
-  if (!response.ok || !data.base64) {
+  const data = await fetchApiJson('/api/gemini/image', { prompt, aspectRatio, model });
+  if (!data.base64) {
     throw new Error(data.error || 'Failed to generate image.');
   }
 
@@ -345,16 +336,7 @@ PROSE QUALITY & ANTI-SUMMARY DIRECTIVES ("SHOW, DON'T TELL"):
 
   for (let i = 0; i < MAX_RETRIES; i++) {
     try {
-      const response = await fetch('/api/gemini/generate-text', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parts, model: activeModel }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to generate chapter');
-      }
+      const data = await fetchApiJson('/api/gemini/generate-text', { parts, model: activeModel });
 
       if (data.usage) {
         PricingService.trackUsage(
@@ -431,16 +413,7 @@ Return ONLY the rewritten manuscript text in clean Markdown format. Do NOT add c
     },
   ];
 
-  const response = await fetch('/api/gemini/generate-text', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ parts, model }),
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || 'Failed to refine chapter text.');
-  }
+  const data = await fetchApiJson('/api/gemini/generate-text', { parts, model });
 
   if (data.usage) {
     PricingService.trackUsage(
