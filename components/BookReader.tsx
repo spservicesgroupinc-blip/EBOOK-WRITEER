@@ -7,9 +7,7 @@ import { generateSpeech, generateImage, refineChapterText, formatImageSrc } from
 import { PricingService, FreeModelOption } from '../services/pricing';
 import { Notification } from './Notification';
 import { CloudService } from '../services/cloud';
-
-// Declare html2pdf globally as it's loaded via CDN in index.html
-declare var html2pdf: any;
+import { generateBookPdf } from '../services/pdf';
 
 interface BookReaderProps {
   outline: BookOutline;
@@ -131,57 +129,19 @@ export const BookReader: React.FC<BookReaderProps> = ({
   }, [currentChapterIndex]);
 
   // --- PDF GENERATION LOGIC ---
-  useEffect(() => {
-    if (!isPdfMode) return;
-
-    let isMounted = true;
-
-    const generate = async () => {
-       // Allow DOM to render the PDF root
-       await new Promise(r => setTimeout(r, 1000));
-
-       if (!isMounted) return;
-
-       const element = document.getElementById('pdf-root');
-       if (!element) {
-          showNotification("Could not find PDF content.", 'error');
-          setIsPdfMode(false);
-          return;
-       }
-
-       // A4 width ~ 210mm. With 10mm margins L/R, content is 190mm.
-       // At ~96 DPI, 1mm ~ 3.78px. 190mm ~ 718px.
-       // We set container to 720px for safety.
-       const opt = {
-          margin: [10, 10, 10, 10], // mm
-          filename: `${outline.title.replace(/[^a-z0-9]/gi, '_').substring(0, 30)}.pdf`,
-          image: { type: 'jpeg', quality: 0.95 },
-          html2canvas: { 
-            scale: 2, 
-            useCORS: true, 
-            logging: false,
-            // Important: Matches the CSS width of pdf-root to prevent overflow
-            windowWidth: 900 
-          },
-          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-          pagebreak: { mode: ['css', 'legacy'] }
-       };
-
-       try {
-         await html2pdf().set(opt).from(element).save();
-         showNotification("PDF Downloaded!");
-       } catch(e) {
-         console.error(e);
-         showNotification("PDF Generation Error", 'error');
-       } finally {
-         if (isMounted) setIsPdfMode(false);
-       }
-    };
-
-    generate();
-
-    return () => { isMounted = false; };
-  }, [isPdfMode]);
+  const handleDownloadPdf = async () => {
+    if (isPdfMode) return;
+    setIsPdfMode(true);
+    try {
+      await generateBookPdf(outline, chapters);
+      showNotification("PDF Downloaded!", 'success');
+    } catch (e: any) {
+      console.error("PDF generation failed:", e);
+      showNotification(e?.message || "PDF Generation Error", 'error');
+    } finally {
+      setIsPdfMode(false);
+    }
+  };
 
   const showNotification = (message: string, type: 'error' | 'success' = 'success') => {
     setNotification({ message, type });
@@ -364,55 +324,13 @@ export const BookReader: React.FC<BookReaderProps> = ({
       )}
 
       {isPdfMode && (
-        <div className="fixed inset-0 z-[9999] bg-white overflow-y-auto">
-          <div className="fixed top-0 left-0 w-full h-full bg-white/95 flex flex-col items-center justify-center z-[10000]">
-             <Loader2 size={64} className="animate-spin text-blue-600 mb-6" />
-             <h2 className="text-3xl font-bold text-slate-800 mb-2">Generating PDF</h2>
-             <p className="text-slate-500">Rendering book layout...</p>
-          </div>
-
-          {/* PDF Rendering Container */}
-          <div id="pdf-root" style={{ width: '720px', margin: '0 auto', background: 'white', padding: '40px 60px', minHeight: '100vh', boxSizing: 'border-box' }}>
-             <style>{`
-               .pdf-text { font-family: 'Georgia', serif; font-size: 13pt; line-height: 1.6; text-align: justify; color: #000; word-wrap: break-word; }
-               .pdf-title-page { height: 900px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; page-break-after: always; }
-               .pdf-chapter { page-break-before: always; margin-top: 40px; }
-               .pdf-chapter h2 { page-break-after: avoid; }
-               h1 { font-size: 42pt; margin-bottom: 20px; font-weight: bold; line-height: 1.1; color: #000; word-wrap: break-word; }
-               h2 { font-size: 28pt; margin-bottom: 25px; font-weight: bold; color: #000; }
-               p { margin-bottom: 1em; }
-               img { max-width: 100%; page-break-inside: avoid; }
-             `}</style>
-
-             <div className="pdf-title-page">
-                <h1>{outline.title}</h1>
-                {outline.coverImage && (
-                  <img 
-                    src={formatImageSrc(outline.coverImage)} 
-                    style={{ width: '350px', height: 'auto', marginBottom: '40px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} 
-                  />
-                )}
-                <p style={{ fontSize: '18pt', fontStyle: 'italic', maxWidth: '500px' }}>{outline.description}</p>
-             </div>
-
-             {chapters.map((chap) => (
-               <div key={chap.chapterNumber} className="pdf-chapter">
-                  <div style={{textAlign: 'center', marginBottom: '40px'}}>
-                     <div style={{fontSize: '14pt', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '10px', color: '#666'}}>
-                        {chap.chapterNumber === 0 ? 'INTRODUCTION' : `CHAPTER ${chap.chapterNumber}`}
-                     </div>
-                     <h2>{chap.title}</h2>
-                  </div>
-                  {chap.image && (
-                     <div style={{display: 'flex', justifyContent: 'center', marginBottom: '30px'}}>
-                        <img src={formatImageSrc(chap.image)} style={{ maxWidth: '100%', borderRadius: '4px' }} />
-                     </div>
-                  )}
-                  <div className="pdf-text">
-                     <ReactMarkdown>{chap.content}</ReactMarkdown>
-                  </div>
-               </div>
-             ))}
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center p-6">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full flex flex-col items-center text-center border border-slate-100">
+             <Loader2 size={48} className="animate-spin text-blue-600 mb-4" />
+             <h2 className="text-xl font-bold text-slate-900 mb-1.5 font-serif">Typesetting PDF Book</h2>
+             <p className="text-sm text-slate-500">
+               Formatting cover art, table of contents, chapter typography, and page numbers...
+             </p>
           </div>
         </div>
       )}
@@ -538,11 +456,12 @@ export const BookReader: React.FC<BookReaderProps> = ({
                    {currentChapter && !currentChapter.isGenerating && (
                       <>
                         <button 
-                            onClick={() => setIsPdfMode(true)}
-                            className="min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors"
+                            onClick={handleDownloadPdf}
+                            disabled={isPdfMode}
+                            className="min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors disabled:opacity-50"
                             title="Download PDF"
                         >
-                            <Download size={18} />
+                            {isPdfMode ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
                         </button>
                         <button 
                             onClick={handleExportDocs}
@@ -589,9 +508,16 @@ export const BookReader: React.FC<BookReaderProps> = ({
                             <div className="h-4 bg-slate-100 rounded w-full"></div>
                             <div className="h-4 bg-slate-100 rounded w-4/6"></div>
                             <div className="h-4 bg-slate-100 rounded w-5/6"></div>
-                            <div className="mt-12 flex items-center justify-center text-blue-600 gap-2 font-medium bg-blue-50 py-3 rounded-lg">
-                                <Wand2 size={16} className="animate-bounce" />
-                                <span className="animate-pulse">Writing your story...</span>
+                            <div className="mt-12 flex flex-col items-center justify-center text-blue-700 gap-1.5 font-medium bg-blue-50 border border-blue-100 py-4 px-4 rounded-xl text-center">
+                                <div className="flex items-center gap-2 font-bold text-sm">
+                                  <Wand2 size={16} className="animate-bounce" />
+                                  <span>
+                                    Writing your story ({chapters.filter(c => !c.isGenerating && Boolean(c.content)).length} of {chapters.length} chapters done)...
+                                  </span>
+                                </div>
+                                <span className="text-xs text-blue-600/80">
+                                  Background mode active — keeps writing &amp; saving even if you lock your phone
+                                </span>
                             </div>
                         </div>
                      ) : (

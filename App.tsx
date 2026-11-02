@@ -8,6 +8,7 @@ import { writeChapter } from './services/gemini';
 import { PricingService } from './services/pricing';
 import { StorageService } from './services/storage';
 import { CloudService, BACKEND_URL } from './services/cloud';
+import { BackgroundKeeper } from './services/backgroundKeeper';
 import { Loader2 } from 'lucide-react';
 import { CostTracker } from './components/CostTracker';
 import { OfflineIndicator } from './components/OfflineIndicator';
@@ -21,7 +22,17 @@ const App: React.FC = () => {
   
   // Background Generation State
   const [generatingProjectId, setGeneratingProjectId] = useState<string | null>(null);
-  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const isGeneratorRunningRef = useRef<boolean>(false);
+  const projectsRef = useRef<BookProject[]>([]);
+  const userRef = useRef<User | undefined>(undefined);
+
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   // Sync State
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -37,10 +48,12 @@ const App: React.FC = () => {
             parsedUser.backendUrl = BACKEND_URL;
           }
           setUser(parsedUser);
+          userRef.current = parsedUser;
         }
 
         const loadedProjects = await StorageService.getAllProjects();
         setProjects(loadedProjects);
+        projectsRef.current = loadedProjects;
         
         const lastActiveId = await StorageService.getActiveProjectId();
         if (lastActiveId && loadedProjects.find(p => p.id === lastActiveId)) {
@@ -87,11 +100,8 @@ const App: React.FC = () => {
     const projectToSave = projects.find(p => p.id === activeProjectId);
     if (!projectToSave) return;
 
-    // We debounce cloud saves to avoid overwhelming Apps Script (which is slow)
-    // 5 seconds after last change, we push to cloud
     const timeout = setTimeout(async () => {
         try {
-            // Quietly sync up
             await CloudService.syncUp(user, projectToSave);
             console.log(`Cloud auto-save complete for ${projectToSave.title}`);
         } catch (e) {
@@ -122,41 +132,29 @@ const App: React.FC = () => {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [user]);
 
-  // --- Background Generator Logic ---
+  // --- Background Generator & Auto-Resume Logic ---
 
-  const requestWakeLock = async () => {
-    try {
-      if ('wakeLock' in navigator) {
-        wakeLockRef.current = await navigator.wakeLock.request('screen');
-      }
-    } catch (err: any) {
-      if (err.name !== 'NotAllowedError') {
-        console.warn(`Wake Lock failed: ${err}`);
-      }
-    }
-  };
+  const startBookGeneration = async (projectId: string, style: WritingStyle = 'standard') => {
+    if (isGeneratorRunningRef.current) return;
 
-  const releaseWakeLock = async () => {
-    if (wakeLockRef.current) {
-      try {
-        await wakeLockRef.current.release();
-        wakeLockRef.current = null;
-      } catch (err) {
-        console.error(`Wake Lock release failed: ${err}`);
-      }
-    }
-  };
-
-  const startBookGeneration = async (projectId: string, style: WritingStyle) => {
-    const project = projects.find(p => p.id === projectId);
+    const project = projectsRef.current.find(p => p.id === projectId);
     if (!project || !project.outline) return;
-    
+
+    isGeneratorRunningRef.current = true;
     setGeneratingProjectId(projectId);
-    await requestWakeLock();
+    BackgroundKeeper.saveActiveJob(projectId, style);
+    await BackgroundKeeper.startBackgroundSession(project.title, project.outline.chapters.length);
 
     const currentChapters: ChapterContent[] = project.outline.chapters.map(outlineChap => {
       const existing = project.chapters.find(c => c.chapterNumber === outlineChap.chapterNumber);
-      if (existing) {
+      if (
+        existing &&
+        existing.content &&
+        existing.content.trim() !== '' &&
+        !existing.content.startsWith('Generation failed.') &&
+        !existing.content.startsWith('Stopped due to API error.') &&
+        !existing.isGenerating
+      ) {
         return { ...existing, title: outlineChap.title };
       }
       return {
@@ -167,18 +165,37 @@ const App: React.FC = () => {
       };
     });
 
-    handleUpdateProject({ ...project, chapters: currentChapters });
+    const initialUpdatedProject: BookProject = {
+      ...project,
+      chapters: currentChapters,
+      lastModified: Date.now()
+    };
+
+    projectsRef.current = projectsRef.current.map(p => p.id === projectId ? initialUpdatedProject : p);
+    setProjects(projectsRef.current);
+    await StorageService.saveAllProjects(projectsRef.current).catch(() => {});
 
     let hasFatalError = false;
+    let pausedForBackgroundReconnect = false;
+    const totalChapters = project.outline.chapters.length;
 
-    for (const chapOutline of project.outline.chapters) {
+    for (let chapIdx = 0; chapIdx < project.outline.chapters.length; chapIdx++) {
+      const chapOutline = project.outline.chapters[chapIdx];
       const chapterToGen = currentChapters.find(c => c.chapterNumber === chapOutline.chapterNumber);
       
       if (chapterToGen && chapterToGen.content && !chapterToGen.isGenerating) {
         continue;
       }
       
-      if (hasFatalError) break;
+      if (hasFatalError || pausedForBackgroundReconnect) break;
+
+      BackgroundKeeper.saveActiveJob(projectId, style);
+      BackgroundKeeper.updateProgress(
+        project.title,
+        chapIdx + 1,
+        totalChapters,
+        chapOutline.title
+      );
 
       try {
         // Build sliding context window:
@@ -191,7 +208,6 @@ const App: React.FC = () => {
           const prevChapNum = project.outline.chapters[prevChapterIndex].chapterNumber;
           const prevCompleted = currentChapters.find(c => c.chapterNumber === prevChapNum);
           if (prevCompleted && prevCompleted.content) {
-             // Extract last ~1200 characters / last paragraph
              previousChapterEnding = prevCompleted.content.slice(-1200);
           }
         }
@@ -208,63 +224,140 @@ const App: React.FC = () => {
           .map(c => `Chapter ${c.chapterNumber === 0 ? 'Intro' : c.chapterNumber} ("${c.title}"): ${c.summary}`)
           .join('\n');
 
-        const content = await writeChapter(chapOutline, project.outline, project.sources, {
+        const latestProject = projectsRef.current.find(p => p.id === projectId) || project;
+
+        const content = await writeChapter(chapOutline, latestProject.outline!, latestProject.sources, {
           style: style,
-          pov: project.settings?.pov || 'third_limited',
-          tense: project.settings?.tense || 'past',
-          targetDepth: project.settings?.targetDepth || 'standard',
-          twoPassPolish: Boolean(project.settings?.twoPassPolish),
+          pov: latestProject.settings?.pov || 'third_limited',
+          tense: latestProject.settings?.tense || 'past',
+          targetDepth: latestProject.settings?.targetDepth || 'standard',
+          twoPassPolish: Boolean(latestProject.settings?.twoPassPolish),
           previousChapterEnding: previousChapterEnding,
           nextChapterSummary: nextChapterSummary,
           storySoFarRecap: precedingSummaries,
-          loreVault: project.outline.loreVault || project.outline.loreBible,
-          model: project.settings?.textModel || PricingService.getSelectedTextModel(),
+          loreVault: latestProject.outline!.loreVault || latestProject.outline!.loreBible,
+          model: latestProject.settings?.textModel || PricingService.getSelectedTextModel(),
         });
         
-        setProjects(prevProjects => prevProjects.map(p => {
-          if (p.id !== projectId) return p;
-          
-          const updatedChapters = p.chapters.map(c => 
-            c.chapterNumber === chapOutline.chapterNumber 
-              ? { ...c, content, isGenerating: false }
-              : c
-          );
-          
-          return { ...p, chapters: updatedChapters, lastModified: Date.now() };
-        }));
-
         const idx = currentChapters.findIndex(c => c.chapterNumber === chapOutline.chapterNumber);
         if (idx !== -1) {
-            currentChapters[idx] = { ...currentChapters[idx], content, isGenerating: false };
+          currentChapters[idx] = { ...currentChapters[idx], content, isGenerating: false };
         }
 
-        // Brief pacing delay between chapters to respect Gemini Free Tier RPM limits
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        // Immediately persist completed chapter to React state, IndexedDB, and Cloud
+        // so progress is never lost even if the phone is locked or closed
+        const updatedSnapshot: BookProject = {
+          ...(projectsRef.current.find(p => p.id === projectId) || latestProject),
+          chapters: [...currentChapters],
+          lastModified: Date.now()
+        };
+
+        projectsRef.current = projectsRef.current.map(p => p.id === projectId ? updatedSnapshot : p);
+        setProjects([...projectsRef.current]);
+
+        await StorageService.saveAllProjects(projectsRef.current).catch(() => {});
+        if (userRef.current) {
+          CloudService.syncUp(userRef.current, updatedSnapshot).catch(() => {});
+        }
+
+        // Non-throttled Web Worker delay between chapters
+        await BackgroundKeeper.unthrottledDelay(800);
 
       } catch (e: any) {
          console.error(`Error generating chapter ${chapOutline.chapterNumber}`, e);
          const isFatal = e.message?.includes('leaked') || e.message?.includes('PERMISSION_DENIED') || e.status === 403;
-         
+         const isHiddenOrOffline =
+           (typeof document !== 'undefined' && document.visibilityState === 'hidden') ||
+           (typeof navigator !== 'undefined' && navigator.onLine === false);
+
          if (isFatal) {
              hasFatalError = true;
-             alert(`Generation Stopped: ${e.message}`);
+             BackgroundKeeper.clearActiveJob();
+         } else if (isHiddenOrOffline) {
+             // Phone OS suspended network while screen was locked; keep chapter in isGenerating: true
+             // and leave active job in localStorage so it auto-resumes when phone wakes or reconnects!
+             pausedForBackgroundReconnect = true;
+             break;
          }
 
-         setProjects(prevProjects => prevProjects.map(p => {
-            if (p.id !== projectId) return p;
-            const updatedChapters = p.chapters.map(c => 
-              c.chapterNumber === chapOutline.chapterNumber 
-                ? { ...c, isGenerating: false, content: isFatal ? "Stopped due to API error." : "Generation failed. Please retry." }
-                : c
-            );
-            return { ...p, chapters: updatedChapters };
-         }));
+         const failedSnapshot: BookProject = {
+           ...(projectsRef.current.find(p => p.id === projectId) || project),
+           chapters: currentChapters.map(c =>
+             c.chapterNumber === chapOutline.chapterNumber
+               ? { ...c, isGenerating: false, content: isFatal ? "Stopped due to API error." : "Generation failed. Please retry." }
+               : c
+           ),
+           lastModified: Date.now()
+         };
+         projectsRef.current = projectsRef.current.map(p => p.id === projectId ? failedSnapshot : p);
+         setProjects([...projectsRef.current]);
+         await StorageService.saveAllProjects(projectsRef.current).catch(() => {});
       }
     }
 
-    setGeneratingProjectId(null);
-    await releaseWakeLock();
+    const allDone = currentChapters.every(c => !c.isGenerating && Boolean(c.content));
+    if (allDone || hasFatalError) {
+      BackgroundKeeper.clearActiveJob();
+      await BackgroundKeeper.stopBackgroundSession();
+      setGeneratingProjectId(null);
+    }
+
+    isGeneratorRunningRef.current = false;
   };
+
+  // Auto-Resume unfinished book generation when app loads, phone wakes up, or network reconnects
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    const checkAndResumeGeneration = () => {
+      if (isGeneratorRunningRef.current) return;
+
+      const activeJob = BackgroundKeeper.getActiveJob();
+      if (activeJob) {
+        const target = projectsRef.current.find(p => p.id === activeJob.projectId);
+        if (target && target.outline) {
+          const hasRemaining =
+            target.chapters.length < target.outline.chapters.length ||
+            target.chapters.some(c => c.isGenerating || !c.content);
+          if (hasRemaining) {
+            startBookGeneration(activeJob.projectId, (activeJob.style as WritingStyle) || 'standard');
+            return;
+          } else {
+            BackgroundKeeper.clearActiveJob();
+          }
+        }
+      }
+
+      // Also check if any project has chapters still marked isGenerating: true
+      const unfinishedProject = projectsRef.current.find(
+        p => p.outline && p.chapters.some(c => c.isGenerating)
+      );
+      if (unfinishedProject) {
+        startBookGeneration(unfinishedProject.id, 'standard');
+      }
+    };
+
+    checkAndResumeGeneration();
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkAndResumeGeneration();
+      }
+    };
+
+    window.addEventListener('focus', checkAndResumeGeneration);
+    window.addEventListener('online', checkAndResumeGeneration);
+    window.addEventListener('pageshow', checkAndResumeGeneration);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', checkAndResumeGeneration);
+      window.removeEventListener('online', checkAndResumeGeneration);
+      window.removeEventListener('pageshow', checkAndResumeGeneration);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded]);
 
   // --- End Generator Logic ---
 

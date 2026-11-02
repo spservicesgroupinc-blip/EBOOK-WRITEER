@@ -10,9 +10,10 @@ import {
   LoreVault 
 } from "../types";
 import { PricingService } from "./pricing";
+import { BackgroundKeeper } from "./backgroundKeeper";
 
-// Helper for delay
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+// Non-throttled delay via Web Worker so background tabs don't stall
+const delay = (ms: number) => BackgroundKeeper.unthrottledDelay(ms);
 
 /**
  * Converts a stored base64 string or data URL into a valid image src URL,
@@ -782,13 +783,18 @@ PROSE QUALITY & ANTI-SUMMARY DIRECTIVES ("SHOW, DON'T TELL"):
     }
   }
 
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = 6;
   let lastError: any;
   let draftContent = "";
   const activeModel = options.model || PricingService.getSelectedTextModel();
 
   for (let i = 0; i < MAX_RETRIES; i++) {
     try {
+      // If phone temporarily lost network while locked/switching towers, wait briefly for connection
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        await delay(3000);
+      }
+
       const data = await fetchApiJson('/api/gemini/generate-text', { parts, model: activeModel });
 
       if (data.usage) {
@@ -804,7 +810,7 @@ PROSE QUALITY & ANTI-SUMMARY DIRECTIVES ("SHOW, DON'T TELL"):
     } catch (error: any) {
       lastError = error;
       console.warn(`Chapter ${chapter.chapterNumber} attempt ${i + 1} failed:`, error.message);
-      await delay(2000 * (i + 1));
+      await delay(2000 * Math.min(i + 1, 3));
     }
   }
 
