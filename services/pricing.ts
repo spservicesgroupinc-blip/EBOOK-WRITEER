@@ -118,8 +118,8 @@ export const DEFAULT_FREE_MODELS: FreeModelOption[] = [
 export const COVER_ONLY_EXTRA_OPTIONS: FreeModelOption[] = [
   {
     id: 'instant-editorial-svg',
-    name: 'Instant Editorial Vector Engine (Zero-Wait SVG)',
-    description: 'Deterministic minimalist print cover & charcoal sketch generator',
+    name: 'Automatic (Uses Free Writing Model)',
+    description: 'Uses your selected free writing model to create original SVG cover art and chapter illustrations',
     modality: 'svg',
   },
 ];

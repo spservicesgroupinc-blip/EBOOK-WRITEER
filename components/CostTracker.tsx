@@ -53,7 +53,7 @@ export const CostTracker: React.FC = () => {
 
   const shortModelLabel = (modelId: string) => {
     if (!modelId) return 'Nemotron 3 Ultra';
-    if (modelId === 'instant-editorial-svg') return 'Instant Vector';
+    if (modelId === 'instant-editorial-svg') return 'Automatic Free Art';
     const parts = modelId.replace(':free', '').split('/');
     return parts[parts.length - 1];
   };

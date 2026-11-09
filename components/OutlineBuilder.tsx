@@ -3,9 +3,13 @@ import React, { useState, useEffect } from 'react';
 import { BookOutline, ChapterOutline, LoreVault } from '../types';
 import { formatImageSrc } from '../services/gemini';
 import { PricingService, FreeModelOption } from '../services/pricing';
+import { ArtDirectionInput } from './ArtDirectionInput';
 import { Sparkles, RefreshCw, Pencil, Check, X, Image as ImageIcon, Loader2, Plus, Trash2, BookMarked, UserCheck, Globe, KeyRound } from 'lucide-react';
 
 interface OutlineBuilderProps {
+  coverArtPrompt?: string;
+  onCoverArtPromptChange?: (prompt: string) => void;
+  nonfiction?: boolean;
   outline: BookOutline;
   isGenerating: boolean;
   onRegenerate: () => void;
@@ -14,7 +18,8 @@ interface OutlineBuilderProps {
 }
 
 export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({ 
-  outline, 
+  coverArtPrompt = '', onCoverArtPromptChange,
+  outline, nonfiction = false,
   isGenerating, 
   onRegenerate,
   onGenerateCover,
@@ -42,9 +47,9 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
       <div className="flex flex-col items-center justify-center py-32 text-center space-y-8">
         <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
         <div>
-           <h3 className="text-2xl font-serif font-bold text-blue-950">Structuring Manuscript...</h3>
+           <h3 className="text-2xl font-serif font-bold text-blue-950">Working on Your Book…</h3>
            <p className="text-slate-500 mt-2 max-w-md mx-auto font-medium">
-             Analyzing themes, narrative arcs, characters, and key events from your materials.
+             Preparing your requested book structure or cover art.
            </p>
         </div>
       </div>
@@ -136,6 +141,7 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
            <span className="text-xs font-bold tracking-[0.2em] uppercase text-blue-600 bg-blue-50 px-3 py-1 rounded-full">Outline Draft</span>
            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-full px-3 py-1">
              <select
+               disabled={isGenerating}
                value={selectedCoverModel}
                onChange={(e) => {
                  setSelectedCoverModel(e.target.value);
@@ -153,14 +159,20 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
              <span className="text-slate-300">|</span>
              <button 
                onClick={onGenerateCover}
+               disabled={isGenerating}
                className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
                title="Generate Cover Art with selected OpenRouter model"
              >
                <ImageIcon size={14} />
-               {outline.coverImage ? 'Regenerate Cover' : 'Create Cover Art'}
+               {isGenerating ? 'Working…' : outline.coverImage ? 'Regenerate Cover' : 'Create Cover Art'}
              </button>
            </div>
         </div>
+
+        {onCoverArtPromptChange && <div className="max-w-2xl mx-auto mb-6">
+          <ArtDirectionInput label="Cover Art Prompt" value={coverArtPrompt} onChange={onCoverArtPromptChange} disabled={isGenerating}
+            placeholder="e.g., A vintage industrial poster: a steam engine in navy and ochre, bold title, clean vector shapes." />
+        </div>}
 
         {editingIndex === 'HEADER' && editData ? (
            <div className="max-w-2xl mx-auto text-left space-y-4 bg-slate-50 p-6 rounded-xl border border-blue-200 shadow-inner">
@@ -219,7 +231,7 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
             <div className="flex items-center justify-between mb-4">
                <div className="flex items-center gap-2">
                   <BookMarked size={20} className="text-blue-600" />
-                  <h3 className="font-bold text-slate-900 text-lg">Story & Lore Vault</h3>
+                  <h3 className="font-bold text-slate-900 text-lg">{nonfiction ? 'Research & Context' : 'Story & Lore Vault'}</h3>
                   <span className="text-xs bg-blue-100 text-blue-700 font-bold px-2.5 py-0.5 rounded-full">Auto-Extracted Context</span>
                </div>
                <div className="flex items-center gap-2">
@@ -236,7 +248,7 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
                         setEditLore(JSON.parse(JSON.stringify(loreVault)));
                       }}
                       className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-white rounded-lg transition-colors"
-                      title="Edit Lore Vault"
+                      title={nonfiction ? 'Edit research context' : 'Edit Lore Vault'}
                     >
                       <Pencil size={16} />
                     </button>
@@ -247,7 +259,7 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
             {editingIndex === 'LORE' && editLore ? (
               <div className="space-y-4 bg-white p-6 rounded-xl border border-blue-200 mt-2">
                 <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">World & Setting</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">{nonfiction ? 'Historical & Subject Context' : 'World & Setting'}</label>
                   <textarea 
                     value={editLore.worldAndSetting}
                     onChange={(e) => setEditLore({...editLore, worldAndSetting: e.target.value})}
@@ -266,7 +278,7 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Plot Arcs & Narrative Rules</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">{nonfiction ? 'Argument, Evidence Boundaries & Gaps' : 'Plot Arcs & Narrative Rules'}</label>
                   <textarea 
                     value={editLore.plotArcsAndRules}
                     onChange={(e) => setEditLore({...editLore, plotArcsAndRules: e.target.value})}
@@ -277,7 +289,7 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
 
                 <div className="flex justify-end gap-2 pt-2">
                   <button onClick={cancelEditing} className="px-3 py-1.5 text-slate-600 font-bold text-xs hover:bg-slate-100 rounded">Cancel</button>
-                  <button onClick={saveLoreVault} className="px-4 py-1.5 bg-blue-600 text-white font-bold text-xs rounded hover:bg-blue-700">Save Lore Vault</button>
+                  <button onClick={saveLoreVault} className="px-4 py-1.5 bg-blue-600 text-white font-bold text-xs rounded hover:bg-blue-700">{nonfiction ? 'Save Context' : 'Save Lore Vault'}</button>
                 </div>
               </div>
             ) : showLoreVault ? (
@@ -285,7 +297,7 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
                 <div className="bg-white p-4 rounded-xl border border-slate-100">
                   <div className="flex items-center gap-1.5 text-slate-700 font-bold text-sm mb-2">
                     <UserCheck size={16} className="text-blue-500" />
-                    Key Characters
+                    {nonfiction ? 'Real People & Institutions' : 'Key Characters'}
                   </div>
                   <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                     {loreVault.characters.map((char, i) => (
@@ -302,7 +314,7 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
                   <div className="bg-white p-3 rounded-xl border border-slate-100">
                     <div className="flex items-center gap-1.5 text-slate-700 font-bold text-xs mb-1">
                       <Globe size={14} className="text-emerald-500" />
-                      World & Setting
+                      {nonfiction ? 'Historical & Subject Context' : 'World & Setting'}
                     </div>
                     <p className="text-xs text-slate-600 leading-relaxed">{loreVault.worldAndSetting}</p>
                   </div>

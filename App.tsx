@@ -158,6 +158,7 @@ const App: React.FC = () => {
         return { ...existing, title: outlineChap.title };
       }
       return {
+        ...existing,
         chapterNumber: outlineChap.chapterNumber,
         title: outlineChap.title,
         content: '',
@@ -166,7 +167,7 @@ const App: React.FC = () => {
     });
 
     const initialUpdatedProject: BookProject = {
-      ...project,
+      ...(projectsRef.current.find(p => p.id === projectId) || project),
       chapters: currentChapters,
       lastModified: Date.now()
     };
@@ -227,7 +228,8 @@ const App: React.FC = () => {
         const latestProject = projectsRef.current.find(p => p.id === projectId) || project;
 
         const content = await writeChapter(chapOutline, latestProject.outline!, latestProject.sources, {
-          style: style,
+          style: latestProject.settings?.writingStyle || style,
+          customInstruction: latestProject.customInstruction,
           pov: latestProject.settings?.pov || 'third_limited',
           tense: latestProject.settings?.tense || 'past',
           targetDepth: latestProject.settings?.targetDepth || 'standard',
@@ -239,6 +241,12 @@ const App: React.FC = () => {
           model: latestProject.settings?.textModel || PricingService.getSelectedTextModel(),
         });
         
+        // Keep art prompts, illustrations, and edits made while this request ran.
+        const liveChapters = projectsRef.current.find(p => p.id === projectId)?.chapters || [];
+        for (let chapterIndex = 0; chapterIndex < currentChapters.length; chapterIndex++) {
+          const live = liveChapters.find(c => c.chapterNumber === currentChapters[chapterIndex].chapterNumber);
+          if (live) currentChapters[chapterIndex] = { ...currentChapters[chapterIndex], ...live };
+        }
         const idx = currentChapters.findIndex(c => c.chapterNumber === chapOutline.chapterNumber);
         if (idx !== -1) {
           currentChapters[idx] = { ...currentChapters[idx], content, isGenerating: false };
@@ -422,7 +430,10 @@ ${originalProject.outline?.chapters.map(c => `Chapter ${c.chapterNumber}: ${c.ti
   };
 
   const handleUpdateProject = (updatedProject: BookProject) => {
-    setProjects(prev => prev.map(p => p.id === updatedProject.id ? updatedProject : p));
+    // A child's generation effect can run before this component's effects.
+    // Publish the updated snapshot synchronously so it sees the saved style and step.
+    projectsRef.current = projectsRef.current.map(p => p.id === updatedProject.id ? updatedProject : p);
+    setProjects(projectsRef.current);
   };
 
   const handleDeleteProject = (id: string, e: React.MouseEvent) => {

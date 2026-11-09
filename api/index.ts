@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { retrieveResearch } from '../services/wikipediaResearch';
 
 const OPENROUTER_MODEL = 'google/gemma-4-26b-a4b-it:free';
 
@@ -370,6 +371,9 @@ const extractJsonObject = (raw: string, fallbackContext = ''): any => {
 };
 
 async function runOpenRouterChat(userContent: string, requestedModel?: string) {
+  if (requestedModel && requestedModel !== 'openrouter/free' && !requestedModel.endsWith(':free')) {
+    throw new Error('Only OpenRouter free models are supported. Select a free model.');
+  }
   const apiKey = resolveOpenRouterApiKey();
   if (!apiKey) {
     throw new Error(
@@ -427,6 +431,7 @@ async function runOpenRouterChat(userContent: string, requestedModel?: string) {
           ],
           provider: {
             sort: 'throughput',
+            max_price: { prompt: 0, completion: 0 },
           },
           reasoning: {
             effort: 'low',
@@ -720,6 +725,19 @@ export default async function handler(req: any, res: any) {
 
     const body = await parseJsonBody(req);
 
+    // Free public background research, independent of OpenRouter model/search billing.
+    if (url.split('?')[0].endsWith('/research')) {
+      if (req.method !== 'POST') return sendJson(res, 405, { error: 'Use POST for research.' });
+      if (typeof body?.topic !== 'string' || !body.topic.trim() || body.topic.trim().length > 200) {
+        return sendJson(res, 400, { error: 'Enter a research topic of 1 to 200 characters.' });
+      }
+      try {
+        return sendJson(res, 200, await retrieveResearch(body.topic));
+      } catch (error: any) {
+        return sendJson(res, 502, { error: error?.name === 'TimeoutError' ? 'Research timed out. Please retry.' : error?.message || 'Research is unavailable. Please retry.' });
+      }
+    }
+
     // 1. Research Book Trends
     if (url.includes('/gemini/trends')) {
       const { model } = body || {};
@@ -772,20 +790,20 @@ Conform to this exact JSON structure:
     {
       "chapterNumber": 0,
       "title": "Introduction",
-      "summary": "Detailed narrative beats and plot points for this chapter."
+      "summary": "Specific chapter goals, development, available evidence and gaps where applicable."
     },
     {
       "chapterNumber": 1,
       "title": "Chapter 1 Title",
-      "summary": "Detailed narrative beats and plot points for this chapter."
+      "summary": "Specific chapter goals, development, available evidence and gaps where applicable."
     }
   ],
   "loreVault": {
     "characters": [
       {
-        "name": "Character Name",
+        "name": "Documented person, institution, or fictional character as appropriate",
         "role": "Character Role",
-        "description": "Character traits, arc, and profile"
+        "description": "Source-grounded role and profile; do not invent real-world biographical details"
       }
     ],
     "worldAndSetting": "Description of settings, environments, or core domain framework.",
