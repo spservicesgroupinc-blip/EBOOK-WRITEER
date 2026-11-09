@@ -2,12 +2,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChapterContent, BookOutline, User, Source, WritingStyle } from '../types';
 import { isNonfiction } from '../services/prompts';
-import { buildIllustrationPrompt, buildCoverIllustrationPrompt } from '../services/illustrations';
 import { ArtDirectionInput } from './ArtDirectionInput';
-import { ChevronLeft, ChevronRight, Loader2, Download, PenLine, Save, Headphones, Play, Square, FileText, Image as ImageIcon, Wand2, Menu, X, Palette, RefreshCw } from 'lucide-react';
+import { ArtworkUpload } from './ArtworkUpload';
+import { ChevronLeft, ChevronRight, Loader2, Download, PenLine, Save, Headphones, Play, Square, FileText, Wand2, Menu, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { generateSpeech, generateImage, refineChapterText, formatImageSrc } from '../services/gemini';
-import { PricingService, FreeModelOption } from '../services/pricing';
+import { generateSpeech, refineChapterText } from '../services/gemini';
 import { Notification } from './Notification';
 import { CloudService } from '../services/cloud';
 import { generateBookPdf } from '../services/pdf';
@@ -24,7 +23,7 @@ interface BookReaderProps {
   onChapterUpdate?: (chapter: ChapterContent, updates?: Partial<ChapterContent>) => void;
   selectedVoice?: string;
   onVoiceChange?: (voice: string) => void;
-  onUpdateOutline?: (outline: BookOutline) => void;
+  onCoverArtworkChange?: (image: string | undefined) => void;
   user?: User;
 }
 
@@ -97,7 +96,7 @@ export const BookReader: React.FC<BookReaderProps> = ({
   onChapterUpdate, 
   selectedVoice, 
   onVoiceChange,
-  onUpdateOutline,
+  onCoverArtworkChange,
   user
 }) => {
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
@@ -111,22 +110,8 @@ export const BookReader: React.FC<BookReaderProps> = ({
   const [editContent, setEditContent] = useState('');
   const [polishInstruction, setPolishInstruction] = useState('');
   const [isPolishing, setIsPolishing] = useState(false);
-  const [isCoverGenerating, setIsCoverGenerating] = useState(false);
-  const [isChapterImageGenerating, setIsChapterImageGenerating] = useState(false);
   const [notification, setNotification] = useState<{message: string, type: 'error' | 'success'} | null>(null);
-  const [coverModels, setCoverModels] = useState<FreeModelOption[]>(PricingService.getCoverModels());
-  const [selectedCoverModel, setSelectedCoverModel] = useState<string>(PricingService.getSelectedCoverModel());
 
-  useEffect(() => {
-    const unsubscribe = PricingService.subscribe((summary) => {
-      setSelectedCoverModel(summary.selectedCoverModel);
-      setCoverModels([...PricingService.getCoverModels()]);
-    });
-    return () => {
-      unsubscribe();
-    };
-  }, []);
-  
   // PDF Generation State: We use a specific mode to render the print layout
   const [isPdfMode, setIsPdfMode] = useState(false);
 
@@ -292,40 +277,6 @@ export const BookReader: React.FC<BookReaderProps> = ({
     }
   };
 
-  const handleGenerateBookCover = async () => {
-    if (!onUpdateOutline) return;
-    setIsCoverGenerating(true);
-    try {
-      const prompt = buildCoverIllustrationPrompt(outline, coverArtPrompt);
-      
-      const base64Image = await generateImage(prompt, '3:4', selectedCoverModel, 'cover');
-      onUpdateOutline({
-        ...outline,
-        coverImage: base64Image
-      });
-      showNotification("Cover Generated!");
-    } catch (e: any) {
-      showNotification(e.message || 'Failed to generate cover. Try another free art model.', 'error');
-    } finally {
-      setIsCoverGenerating(false);
-    }
-  };
-
-  const handleGenerateChapterImage = async () => {
-    if (!currentChapter || !onChapterUpdate) return;
-    setIsChapterImageGenerating(true);
-    try {
-      const prompt = buildIllustrationPrompt(currentChapter, outline, writingStyle);
-      const base64 = await generateImage(prompt, '16:9', selectedCoverModel, 'chapter');
-      onChapterUpdate({ ...currentChapter, image: base64 }, { image: base64 });
-      showNotification('Chapter illustration generated.');
-    } catch (e: any) {
-      showNotification(e.message || 'Failed to generate illustration. Try another free art model.', 'error');
-    } finally {
-      setIsChapterImageGenerating(false);
-    }
-  };
-
   return (
     <>
       {notification && (
@@ -360,62 +311,9 @@ export const BookReader: React.FC<BookReaderProps> = ({
           </div>
 
           {/* Book Cover in Sidebar */}
-          <div className="p-4 border-b border-slate-100 flex flex-col items-center bg-white">
-              <div className="w-full mb-2.5">
-                <label className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                  <Palette size={11} className="text-purple-500" />
-                  Cover / Art Model (Free)
-                </label>
-                <select
-                  value={selectedCoverModel}
-                  onChange={(e) => {
-                    setSelectedCoverModel(e.target.value);
-                    PricingService.setSelectedCoverModel(e.target.value);
-                  }}
-                  className="w-full text-[11px] bg-slate-50 border border-slate-200 text-slate-700 rounded-md px-2 py-1.5 outline-none focus:ring-1 focus:ring-purple-500 font-medium truncate"
-                >
-                  {coverModels.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {onCoverArtPromptChange && <div className="w-full mb-3">
-                <ArtDirectionInput label="Cover Art Prompt" value={coverArtPrompt} onChange={onCoverArtPromptChange} disabled={isCoverGenerating} />
-              </div>}
-
-              {outline.coverImage ? (
-                  <div className="relative group w-32 shadow-lg rounded-md overflow-hidden mb-3">
-                      <img src={formatImageSrc(outline.coverImage)} alt="Cover" className="w-full h-auto" />
-                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                          <button 
-                            onClick={handleGenerateBookCover}
-                            disabled={isCoverGenerating}
-                            className="p-2 bg-white text-slate-900 rounded-full hover:bg-blue-50 transition-colors"
-                            title="Regenerate Cover"
-                          >
-                             {isCoverGenerating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-                          </button>
-                      </div>
-                  </div>
-              ) : (
-                  <button 
-                    onClick={handleGenerateBookCover}
-                    disabled={isCoverGenerating}
-                    className="w-full py-6 border-2 border-dashed border-slate-200 rounded-lg flex flex-col items-center justify-center text-slate-400 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50 transition-all mb-2"
-                  >
-                      {isCoverGenerating ? (
-                          <Loader2 size={24} className="animate-spin mb-2" />
-                      ) : (
-                          <ImageIcon size={24} className="mb-2" />
-                      )}
-                      <span className="text-xs font-bold uppercase tracking-wide">
-                          {isCoverGenerating ? 'Designing...' : 'Create Cover Art'}
-                      </span>
-                  </button>
-              )}
+          <div className="p-4 border-b border-slate-100 space-y-4 bg-white overflow-y-auto max-h-[65dvh]">
+            <ArtworkUpload kind="cover" image={outline.coverImage} onChange={image => onCoverArtworkChange?.(image)} disabled={!onCoverArtworkChange} />
+            {onCoverArtPromptChange && <ArtDirectionInput label="Cover Art Prompt" value={coverArtPrompt} onChange={onCoverArtPromptChange} />}
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -619,39 +517,15 @@ export const BookReader: React.FC<BookReaderProps> = ({
                               </div>
                            ) : (
                               <div className="prose prose-base sm:prose-lg prose-slate max-w-none font-serif leading-relaxed sm:leading-loose prose-headings:font-sans prose-headings:font-bold prose-p:text-slate-700">
-                                 {/* Chapter Image/Sketch */}
-                                 {onChapterUpdate && <div className="not-prose my-6">
-                                   <ArtDirectionInput label="Chapter Illustration Prompt" value={currentChapter.illustrationPrompt || ''}
-                                     disabled={isChapterImageGenerating || currentChapter.isGenerating}
+                                 <div className="not-prose my-6 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-6">
+                                   <ArtworkUpload key={currentChapter.chapterNumber} kind="chapter" image={currentChapter.image}
+                                     alt={`Illustration for ${currentChapter.title}`} disabled={!onChapterUpdate || currentChapter.isGenerating}
+                                     onChange={image => onChapterUpdate?.({ ...currentChapter, image }, { image })} />
+                                   {onChapterUpdate && <ArtDirectionInput label="Chapter Illustration Prompt" value={currentChapter.illustrationPrompt || ''}
+                                     disabled={currentChapter.isGenerating}
                                      onChange={illustrationPrompt => onChapterUpdate({ ...currentChapter, illustrationPrompt }, { illustrationPrompt })}
-                                     placeholder="e.g., A cutaway drawing of a steam engine, dark blue ink, clear lines, no labels." />
-                                 </div>}
-                                 {currentChapter.image ? (
-                                    <div className="my-6 sm:my-8 rounded-xl overflow-hidden shadow-lg border border-slate-100">
-                                       <img src={formatImageSrc(currentChapter.image)} alt={`Illustration for ${currentChapter.title}`} className="w-full h-auto" />
-                                       <div className="flex flex-wrap items-center gap-3 px-4 py-2 bg-slate-50 font-sans text-xs">
-                                         <span className="text-slate-600">{isNonfiction(writingStyle) ? 'AI conceptual illustration, not documentary evidence.' : 'AI vector illustration'}</span>
-                                         <button type="button" onClick={handleGenerateChapterImage} disabled={isChapterImageGenerating || !onChapterUpdate}
-                                           className="min-h-[44px] text-blue-700 font-bold disabled:opacity-50">
-                                           {isChapterImageGenerating ? 'Generating…' : 'Regenerate Illustration'}
-                                         </button>
-                                         <button type="button" disabled={isChapterImageGenerating || !onChapterUpdate}
-                                           onClick={() => onChapterUpdate?.({ ...currentChapter, image: undefined }, { image: undefined })}
-                                           className="min-h-[44px] text-slate-600 disabled:opacity-50">Remove Illustration</button>
-                                       </div>
-                                    </div>
-                                 ) : (
-                                    <div className="flex justify-center my-6 group">
-                                       <button 
-                                          onClick={handleGenerateChapterImage}
-                                          disabled={isChapterImageGenerating || !onChapterUpdate || currentChapter.isGenerating || !currentChapter.content.trim()}
-                                          className="min-h-[40px] flex items-center gap-2 text-xs text-slate-500 hover:text-blue-600 border border-slate-200 hover:border-blue-200 bg-slate-50 hover:bg-blue-50 px-4 py-2 rounded-full transition-all"
-                                       >
-                                          {isChapterImageGenerating ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} />}
-                                          {isChapterImageGenerating ? 'Generating Illustration…' : 'Generate Chapter Illustration'}
-                                       </button>
-                                    </div>
-                                 )}
+                                     placeholder="Save the illustration prompt you want to use in your preferred art tool." />}
+                                 </div>
 
                                  <ReactMarkdown>{currentChapter.content}</ReactMarkdown>
                               </div>

@@ -43,7 +43,7 @@ All art requests use free text models for SVG vector output; no paid image model
 
 ## Verification
 
-- 25 node:test checks cover prompt propagation, full editing instructions, research
+- 31 node:test checks cover prompt propagation, full editing instructions, research
   retrieval/failure cases, server and browser free-model routing, and art direction.
 - Chromium workflow checks cover saved style/research/art prompts after reload,
   research failures, outline-to-manuscript navigation, rendered SVG dimensions,
@@ -66,3 +66,25 @@ into a temporary module package and invokes health/research without tsx.
 Generation configuration, research, and OpenRouter responses are parsed defensively:
 plain-text/HTML server failures retain a useful HTTP status and retry instruction,
 instead of throwing a JSON syntax error or being mistaken for a missing API key.
+
+## Uploaded artwork (supersedes in-app SVG generation)
+
+Keep AI writing on free models. Replace the art-generation controls with local image
+uploads in the outline and reader: upload/replace/remove a cover and an illustration
+for each chapter. Preserve existing images and saved art-direction notes. Notes can
+be used with an external art tool; changing them does not alter the uploaded image.
+No new image service, paid model, or server upload endpoint is introduced.
+
+Accept PNG, JPEG, and WebP up to 15 MB; validate signatures and decode images before
+replacing saved art. Preserve proportions and optimize large images to a maximum
+2400-pixel edge as high-quality JPEG for storage and existing PDF/EPUB exports.
+Reject corrupt, unsupported, or oversized files without losing the previous image.
+Persist through the existing project storage/sync. Check exports and phone/desktop
+upload flows, including replacing/removing images and reselecting the same file.
+
+Verification: Chromium exercised PNG/JPEG/WebP uploads, corrupt/disguised/oversized
+files, replacement/removal, same-file reselection, independent chapter images, and
+persistence after reload. No AI endpoint was called during artwork operations.
+Reader layouts and cover settings checked at 320/768/1024/1440 pixels. PDF and EPUB
+checks include a cover plus two chapter images; PDF artwork is fitted proportionally
+inside its frame rather than stretched, with higher-resolution rasterization.
