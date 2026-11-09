@@ -1,8 +1,10 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BookProject, BookOutline, WritingStyle, User } from '../types';
 import { generateOutline, generateImage } from '../services/gemini';
 import { PricingService, FreeModelOption } from '../services/pricing';
+import { isNonfiction } from '../services/prompts';
+import { buildCoverIllustrationPrompt } from '../services/illustrations';
 import { SourceInput } from './SourceInput';
 import { OutlineBuilder } from './OutlineBuilder';
 import { BookReader } from './BookReader';
@@ -26,6 +28,7 @@ const STEPS = [
 
 const WRITING_STYLES: {id: WritingStyle, name: string, description: string}[] = [
   { id: 'standard', name: 'Balanced', description: 'Clear, engaging, and professional.' },
+  { id: 'educational_nonfiction', name: 'History & Current Affairs', description: 'Educational, witty nonfiction grounded in real sources. No invented stories.' },
   { id: 'literary', name: 'Literary', description: 'Rich descriptions, metaphoric, and elevated prose.' },
   { id: 'humorous', name: 'Witty', description: 'Light-hearted, clever, and entertaining.' },
   { id: 'sarcastic', name: 'Edgy', description: 'Sharp wit, heavy sarcasm, and adult humor.' },
@@ -41,9 +44,15 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
   isGeneratingGlobal,
   user
 }) => {
+  const projectRef = useRef(project);
+  projectRef.current = project;
   const [isProcessing, setIsProcessing] = useState(false);
   const [localTitle, setLocalTitle] = useState(project.title);
-  const [selectedStyle, setSelectedStyle] = useState<WritingStyle>('standard');
+  const selectedStyle = project.settings?.writingStyle || 'standard';
+  const nonfiction = isNonfiction(selectedStyle);
+  const automaticResearch = nonfiction && project.settings?.automaticResearch !== false;
+  const researchTopic = project.settings?.researchTopic?.trim() || '';
+  const [researchWarnings, setResearchWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [freeTextModels, setFreeTextModels] = useState<FreeModelOption[]>(PricingService.getFreeModels());
   const [freeCoverModels, setFreeCoverModels] = useState<FreeModelOption[]>(PricingService.getCoverModels());
@@ -85,7 +94,7 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
 
   const updateProject = (updates: Partial<BookProject>) => {
     onUpdateProject({
-      ...project,
+      ...projectRef.current,
       ...updates,
       lastModified: Date.now()
     });
@@ -97,18 +106,52 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
      }
   };
 
-  const handleCreateOutline = async () => {
-    if (project.sources.length === 0) return;
+  const fetchResearch = async () => {
+    if (!researchTopic) throw new Error('Enter a research topic before searching.');
+    const response = await fetch('/api/research', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: researchTopic }), signal: AbortSignal.timeout(35000),
+    });
+    const data = await response.json();
+    if (!response.ok || !Array.isArray(data.sources) || !data.sources.length) {
+      throw new Error(data.error || 'No research sources were returned. Try another topic.');
+    }
+    setResearchWarnings(data.warnings || []);
+    return [...project.sources.filter(source => !source.research), ...data.sources];
+  };
+
+  const handleRefreshResearch = async () => {
     setIsProcessing(true);
     setError(null);
     try {
-      const generatedOutline = await generateOutline(project.sources, project.customInstruction, {
+      updateProject({ sources: await fetchResearch() });
+    } catch (e: any) {
+      setError(e.message || 'Research could not be retrieved. Please retry.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCreateOutline = async () => {
+    if (!project.sources.length && !automaticResearch) return;
+    setIsProcessing(true);
+    setError(null);
+    try {
+      let sources = project.sources;
+      if (automaticResearch && (!sources.some(source => source.research?.query === researchTopic) ||
+          sources.some(source => source.research && source.research.query !== researchTopic))) {
+        sources = await fetchResearch();
+        updateProject({ sources });
+      }
+      const generatedOutline = await generateOutline(sources, project.customInstruction, {
+        style: selectedStyle,
         pov: project.settings?.pov,
         tense: project.settings?.tense,
         targetDepth: project.settings?.targetDepth,
         model: selectedTextModel,
       });
       updateProject({
+        sources,
         outline: generatedOutline,
         chapters: [],
         currentStep: 1,
@@ -127,12 +170,9 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
     setIsProcessing(true);
     setError(null);
     try {
-      const prompt = `Create a flat 2D front cover design for a book titled "${project.outline.title}". 
-      Description: ${project.outline.description}. 
-      Style: Minimalist, modern, striking typography, best-selling aesthetic.
-      IMPORTANT: This must be a flat, rectangular 2D image suitable for printing. Do NOT render a 3D book object, do NOT show a book spine, and do NOT place the book on a table or background surface. Just the artwork itself.`;
+      const prompt = buildCoverIllustrationPrompt(project.outline, project.settings?.coverArtPrompt);
       
-      const base64Image = await generateImage(prompt, '3:4', selectedCoverModel); 
+      const base64Image = await generateImage(prompt, '3:4', selectedCoverModel, 'cover');
       updateProject({
         outline: {
           ...project.outline,
@@ -235,15 +275,17 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                    <FileAudio size={24} />
                 </div>
                 <h2 className="text-2xl sm:text-3xl font-serif font-bold text-slate-900 mb-2 sm:mb-3">Source Material</h2>
-                <p className="text-slate-500 text-sm sm:text-lg max-w-xl mx-auto leading-relaxed">Gather your raw thoughts, recordings, and notes. This is the clay we will sculpt into your story.</p>
+                <p className="text-slate-500 text-sm sm:text-lg max-w-xl mx-auto leading-relaxed">Gather your ideas, recordings, research, and notes to shape your book.</p>
               </div>
               
+              <fieldset disabled={isProcessing || isGeneratingGlobal}>
               <SourceInput 
                 sources={project.sources} 
                 onUpdate={(newSources) => updateProject({ sources: newSources })} 
               />
+              </fieldset>
               
-              <div className="mt-12 bg-slate-50 border border-slate-100 rounded-xl p-6 space-y-6">
+              <fieldset disabled={isProcessing || isGeneratingGlobal} className="mt-12 bg-slate-50 border border-slate-100 rounded-xl p-6 space-y-6">
                  <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
                     <Feather size={18} className="text-blue-600" />
                     <h3 className="font-bold text-slate-800 text-lg">Manuscript Writing Settings</h3>
@@ -257,7 +299,8 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                          <button
                            key={style.id}
                            type="button"
-                           onClick={() => setSelectedStyle(style.id)}
+                           aria-pressed={selectedStyle === style.id}
+                           onClick={() => updateProject({ settings: { ...project.settings, writingStyle: style.id } })}
                            className={`text-left p-3 rounded-lg border transition-all ${selectedStyle === style.id ? 'bg-white border-blue-500 shadow-md ring-1 ring-blue-500' : 'bg-white border-slate-200 hover:border-blue-300 hover:shadow-sm'}`}
                          >
                             <div className={`font-bold text-sm mb-1 ${selectedStyle === style.id ? 'text-blue-700' : 'text-slate-700'}`}>{style.name}</div>
@@ -267,8 +310,40 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                    </div>
                  </div>
 
+                 {nonfiction && (
+                   <div className="space-y-3 border border-blue-200 bg-white rounded-lg p-4">
+                     <h4 className="font-bold text-slate-800">Research &amp; factual grounding</h4>
+                     <p className="text-sm text-slate-600">Explain real events and ideas with wit, context, and citations. Missing support is flagged instead of filled with invented scenes or statistics.</p>
+                     <label className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                       <input type="checkbox" checked={automaticResearch}
+                         onChange={e => updateProject({ settings: { ...project.settings, automaticResearch: e.target.checked } })} />
+                       Automatically research this topic for free
+                     </label>
+                     <p className="text-xs text-slate-600">Searches English Wikipedia and saves dated excerpts with source links. This is background research, not a live news feed or primary-source fact check. Add official reports or recent data as notes for stronger coverage. All AI uses OpenRouter free models; no paid search plugin.</p>
+                     <label htmlFor="research-topic" className="block text-sm font-medium text-slate-700">Research topic</label>
+                     <input id="research-topic" maxLength={200} value={project.settings?.researchTopic || ''}
+                       onChange={e => updateProject({ settings: { ...project.settings, researchTopic: e.target.value } })}
+                       placeholder="e.g., Industrial Revolution in Britain"
+                       className="w-full min-h-[44px] rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                     <button type="button" onClick={handleRefreshResearch} disabled={!researchTopic || isProcessing || isGeneratingGlobal}
+                       className="min-h-[44px] px-4 py-2 bg-blue-600 text-white rounded-lg font-bold text-sm disabled:opacity-50">
+                       {isProcessing ? 'Working…' : 'Search / Refresh Research'}
+                     </button>
+                     <p className="text-xs text-slate-600">Saved research is reused for the outline, chapters, and edits. Refresh to collect a new snapshot. Existing chapters keep their text until you edit them.</p>
+                     {researchWarnings.map(warning => <p key={warning} role="status" className="text-sm text-amber-800">{warning}</p>)}
+                     {project.sources.filter(source => source.research).map(source => (
+                       <p key={source.id} className="text-xs text-slate-600 break-words">
+                         <a href={source.research!.url} target="_blank" rel="noreferrer" className="text-blue-700 underline">{source.name}</a>
+                         {' · Retrieved '}{new Date(source.research!.retrievedAt).toLocaleDateString()}
+                         {source.research!.revisionDate && ` · Page updated ${new Date(source.research!.revisionDate).toLocaleDateString()}`}
+                       </p>
+                     ))}
+                   </div>
+                 )}
+
                  {/* Advanced Manuscript Selectors: POV, Tense, Chapter Depth */}
                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                   {!nonfiction && <>
                    <div>
                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Point of View (POV)</label>
                      <select
@@ -295,6 +370,7 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                      </select>
                    </div>
 
+                   </>}
                    <div>
                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Target Chapter Depth</label>
                      <select
@@ -377,7 +453,7 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                      className="w-5 h-5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
                    />
                  </div>
-              </div>
+              </fieldset>
 
               <div className="mt-6 bg-amber-50 border border-amber-100 rounded-xl p-6">
                   <div className="flex items-center gap-2 mb-3 text-amber-800">
@@ -396,7 +472,7 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
               <div className="flex justify-center pt-8 mt-4">
                 <button 
                   onClick={handleCreateOutline}
-                  disabled={project.sources.length === 0 || isProcessing || project.sources.some(s => s.isProcessing)}
+                  disabled={(!project.sources.length && !automaticResearch) || (automaticResearch && !researchTopic) || isProcessing || isGeneratingGlobal || project.sources.some(s => s.isProcessing)}
                   className="flex items-center gap-3 bg-blue-600 hover:bg-blue-500 text-white pl-8 pr-6 py-4 rounded-full font-bold text-lg transition-all shadow-lg shadow-blue-600/30 hover:shadow-blue-600/50 hover:-translate-y-1 disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed disabled:translate-y-0"
                 >
                   {isProcessing ? 'Analyzing...' : 'Generate Structure'}
@@ -409,8 +485,11 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
           {project.currentStep === 1 && project.outline && (
             <div className="animate-in fade-in slide-in-from-bottom-2 print:hidden no-print">
                <OutlineBuilder 
+                 coverArtPrompt={project.settings?.coverArtPrompt || ''}
+                 onCoverArtPromptChange={coverArtPrompt => updateProject({ settings: { ...projectRef.current.settings, coverArtPrompt } })}
+                 nonfiction={nonfiction}
                  outline={project.outline} 
-                 isGenerating={isProcessing && !project.outline} 
+                 isGenerating={isProcessing}
                  onRegenerate={handleCreateOutline}
                  onGenerateCover={handleGenerateCover}
                  onUpdateOutline={handleUpdateOutline}
@@ -435,12 +514,18 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
 
           {project.currentStep === 2 && project.outline && (
             <BookReader 
+              coverArtPrompt={project.settings?.coverArtPrompt || ''}
+              onCoverArtPromptChange={coverArtPrompt => updateProject({ settings: { ...projectRef.current.settings, coverArtPrompt } })}
+              writingStyle={selectedStyle}
+              sources={project.sources}
+              customInstruction={project.customInstruction}
+              textModel={selectedTextModel}
               outline={project.outline} 
               chapters={project.chapters} 
               selectedVoice={project.audioVoice || 'Kore'}
               onVoiceChange={(voice) => updateProject({ audioVoice: voice })}
-              onChapterUpdate={(updatedChapter) => {
-                 const newChapters = project.chapters.map(c => c.chapterNumber === updatedChapter.chapterNumber ? updatedChapter : c);
+              onChapterUpdate={(updatedChapter, updates) => {
+                 const newChapters = projectRef.current.chapters.map(c => c.chapterNumber === updatedChapter.chapterNumber ? { ...c, ...(updates || updatedChapter) } : c);
                  updateProject({ chapters: newChapters });
               }}
               onUpdateOutline={handleUpdateOutline}

@@ -1,6 +1,9 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { ChapterContent, BookOutline, User } from '../types';
+import { ChapterContent, BookOutline, User, Source, WritingStyle } from '../types';
+import { isNonfiction } from '../services/prompts';
+import { buildIllustrationPrompt, buildCoverIllustrationPrompt } from '../services/illustrations';
+import { ArtDirectionInput } from './ArtDirectionInput';
 import { ChevronLeft, ChevronRight, Loader2, Download, PenLine, Save, Headphones, Play, Square, FileText, Image as ImageIcon, Wand2, Menu, X, Palette, RefreshCw } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { generateSpeech, generateImage, refineChapterText, formatImageSrc } from '../services/gemini';
@@ -10,9 +13,15 @@ import { CloudService } from '../services/cloud';
 import { generateBookPdf } from '../services/pdf';
 
 interface BookReaderProps {
+  coverArtPrompt?: string;
+  onCoverArtPromptChange?: (prompt: string) => void;
+  writingStyle?: WritingStyle;
+  sources?: Source[];
+  customInstruction?: string;
+  textModel?: string;
   outline: BookOutline;
   chapters: ChapterContent[];
-  onChapterUpdate?: (chapter: ChapterContent) => void;
+  onChapterUpdate?: (chapter: ChapterContent, updates?: Partial<ChapterContent>) => void;
   selectedVoice?: string;
   onVoiceChange?: (voice: string) => void;
   onUpdateOutline?: (outline: BookOutline) => void;
@@ -81,6 +90,8 @@ async function decodeAudioData(
 }
 
 export const BookReader: React.FC<BookReaderProps> = ({ 
+  coverArtPrompt = '', onCoverArtPromptChange,
+  writingStyle, sources, customInstruction, textModel,
   outline, 
   chapters, 
   onChapterUpdate, 
@@ -271,7 +282,7 @@ export const BookReader: React.FC<BookReaderProps> = ({
     if (!polishInstruction.trim()) return;
     setIsPolishing(true);
     try {
-      const polished = await refineChapterText(editContent, polishInstruction);
+      const polished = await refineChapterText(editContent, polishInstruction, textModel, { style: writingStyle, sources, customInstruction });
       setEditContent(polished);
       setPolishInstruction('');
     } catch (e) {
@@ -285,19 +296,16 @@ export const BookReader: React.FC<BookReaderProps> = ({
     if (!onUpdateOutline) return;
     setIsCoverGenerating(true);
     try {
-      const prompt = `Create a flat 2D front cover design for a book titled "${outline.title}". 
-      Description: ${outline.description}. 
-      Style: Minimalist, modern, striking typography, best-selling aesthetic.
-      IMPORTANT: This must be a flat, rectangular 2D image suitable for printing. Do NOT render a 3D book object, do NOT show a book spine.`;
+      const prompt = buildCoverIllustrationPrompt(outline, coverArtPrompt);
       
-      const base64Image = await generateImage(prompt, '3:4', selectedCoverModel); 
+      const base64Image = await generateImage(prompt, '3:4', selectedCoverModel, 'cover');
       onUpdateOutline({
         ...outline,
         coverImage: base64Image
       });
       showNotification("Cover Generated!");
     } catch (e: any) {
-      showNotification("Failed to generate cover.", 'error');
+      showNotification(e.message || 'Failed to generate cover. Try another free art model.', 'error');
     } finally {
       setIsCoverGenerating(false);
     }
@@ -307,11 +315,12 @@ export const BookReader: React.FC<BookReaderProps> = ({
     if (!currentChapter || !onChapterUpdate) return;
     setIsChapterImageGenerating(true);
     try {
-      const prompt = `Charcoal sketch. ${currentChapter.title}. ${currentChapter.content.slice(0, 200)}. High contrast, black and white.`;
-      const base64 = await generateImage(prompt, '16:9', selectedCoverModel);
-      onChapterUpdate({ ...currentChapter, image: base64 });
-    } catch (e) {
-      showNotification("Failed to generate sketch.", 'error');
+      const prompt = buildIllustrationPrompt(currentChapter, outline, writingStyle);
+      const base64 = await generateImage(prompt, '16:9', selectedCoverModel, 'chapter');
+      onChapterUpdate({ ...currentChapter, image: base64 }, { image: base64 });
+      showNotification('Chapter illustration generated.');
+    } catch (e: any) {
+      showNotification(e.message || 'Failed to generate illustration. Try another free art model.', 'error');
     } finally {
       setIsChapterImageGenerating(false);
     }
@@ -372,6 +381,10 @@ export const BookReader: React.FC<BookReaderProps> = ({
                   ))}
                 </select>
               </div>
+
+              {onCoverArtPromptChange && <div className="w-full mb-3">
+                <ArtDirectionInput label="Cover Art Prompt" value={coverArtPrompt} onChange={onCoverArtPromptChange} disabled={isCoverGenerating} />
+              </div>}
 
               {outline.coverImage ? (
                   <div className="relative group w-32 shadow-lg rounded-md overflow-hidden mb-3">
@@ -559,8 +572,14 @@ export const BookReader: React.FC<BookReaderProps> = ({
                                                 : ''
                                             }Ensure the opening picks up naturally without repetitive re-introductions and the ending bridges cleanly forward.`
                                           },
-                                          { label: "✨ Sensory Details", prompt: "Deepen sensory descriptions with sights, sounds, and physical atmosphere." },
-                                          { label: "💬 Character Dialogue", prompt: "Add realistic character dialogue and natural subtext." },
+                                          ...(isNonfiction(writingStyle) ? [
+                                            { label: 'Clarify the Explanation', prompt: 'Explain unfamiliar terms and sharpen cause-and-effect reasoning without adding unsupported claims.' },
+                                            { label: 'Sharpen the Wit', prompt: 'Add restrained observational wit and useful analogies while preserving factual meaning and all citations.' },
+                                            { label: 'Review Evidence Gaps', prompt: 'Compare factual claims with supplied evidence. Preserve supported citations and flag unsupported details with specific evidence-needed markers. Do not claim independent verification.' },
+                                          ] : [
+                                            { label: '✨ Sensory Details', prompt: 'Deepen sensory descriptions with sights, sounds, and physical atmosphere.' },
+                                            { label: '💬 Character Dialogue', prompt: 'Add realistic character dialogue and natural subtext.' },
+                                          ]),
                                           { label: "⚡ Accelerate Pacing", prompt: "Tighten sentences, remove slow exposition, and accelerate pacing." },
                                           { label: "🧹 Strip AI Clichés", prompt: "Strip AI clichés ('testament to', 'tapestry', 'delve') and strengthen active verbs." }
                                        ].map((chip, i) => (
@@ -571,7 +590,7 @@ export const BookReader: React.FC<BookReaderProps> = ({
                                                 setPolishInstruction(chip.prompt);
                                                 setIsPolishing(true);
                                                 try {
-                                                  const polished = await refineChapterText(editContent, chip.prompt);
+                                                  const polished = await refineChapterText(editContent, chip.prompt, textModel, { style: writingStyle, sources, customInstruction });
                                                   setEditContent(polished);
                                                   setPolishInstruction('');
                                                 } catch (e) {
@@ -601,19 +620,35 @@ export const BookReader: React.FC<BookReaderProps> = ({
                            ) : (
                               <div className="prose prose-base sm:prose-lg prose-slate max-w-none font-serif leading-relaxed sm:leading-loose prose-headings:font-sans prose-headings:font-bold prose-p:text-slate-700">
                                  {/* Chapter Image/Sketch */}
+                                 {onChapterUpdate && <div className="not-prose my-6">
+                                   <ArtDirectionInput label="Chapter Illustration Prompt" value={currentChapter.illustrationPrompt || ''}
+                                     disabled={isChapterImageGenerating || currentChapter.isGenerating}
+                                     onChange={illustrationPrompt => onChapterUpdate({ ...currentChapter, illustrationPrompt }, { illustrationPrompt })}
+                                     placeholder="e.g., A cutaway drawing of a steam engine, dark blue ink, clear lines, no labels." />
+                                 </div>}
                                  {currentChapter.image ? (
                                     <div className="my-6 sm:my-8 rounded-xl overflow-hidden shadow-lg border border-slate-100">
-                                       <img src={formatImageSrc(currentChapter.image)} alt="Chapter Sketch" className="w-full h-auto" />
+                                       <img src={formatImageSrc(currentChapter.image)} alt={`Illustration for ${currentChapter.title}`} className="w-full h-auto" />
+                                       <div className="flex flex-wrap items-center gap-3 px-4 py-2 bg-slate-50 font-sans text-xs">
+                                         <span className="text-slate-600">{isNonfiction(writingStyle) ? 'AI conceptual illustration, not documentary evidence.' : 'AI vector illustration'}</span>
+                                         <button type="button" onClick={handleGenerateChapterImage} disabled={isChapterImageGenerating || !onChapterUpdate}
+                                           className="min-h-[44px] text-blue-700 font-bold disabled:opacity-50">
+                                           {isChapterImageGenerating ? 'Generating…' : 'Regenerate Illustration'}
+                                         </button>
+                                         <button type="button" disabled={isChapterImageGenerating || !onChapterUpdate}
+                                           onClick={() => onChapterUpdate?.({ ...currentChapter, image: undefined }, { image: undefined })}
+                                           className="min-h-[44px] text-slate-600 disabled:opacity-50">Remove Illustration</button>
+                                       </div>
                                     </div>
                                  ) : (
                                     <div className="flex justify-center my-6 group">
                                        <button 
                                           onClick={handleGenerateChapterImage}
-                                          disabled={isChapterImageGenerating}
+                                          disabled={isChapterImageGenerating || !onChapterUpdate || currentChapter.isGenerating || !currentChapter.content.trim()}
                                           className="min-h-[40px] flex items-center gap-2 text-xs text-slate-500 hover:text-blue-600 border border-slate-200 hover:border-blue-200 bg-slate-50 hover:bg-blue-50 px-4 py-2 rounded-full transition-all"
                                        >
                                           {isChapterImageGenerating ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} />}
-                                          Generate Chapter Illustration
+                                          {isChapterImageGenerating ? 'Generating Illustration…' : 'Generate Chapter Illustration'}
                                        </button>
                                     </div>
                                  )}

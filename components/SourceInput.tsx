@@ -465,7 +465,7 @@ export const SourceInput: React.FC<SourceInputProps> = ({ sources, onUpdate }) =
           </div>
           <textarea 
             className="w-full p-4 bg-slate-50 text-slate-900 border-0 rounded-lg focus:ring-2 focus:ring-blue-200 focus:bg-white outline-none min-h-[200px] placeholder-slate-400 font-serif leading-relaxed resize-y text-lg"
-            placeholder="Start typing your story, thoughts, or outline ideas here..."
+            placeholder="Add ideas or research excerpts here. For facts and data, include the source title, URL, date, and relevant figures or quotations."
             value={noteText}
             onChange={(e) => setNoteText(e.target.value)}
             autoFocus

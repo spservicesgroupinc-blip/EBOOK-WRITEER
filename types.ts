@@ -14,6 +14,7 @@ export interface Source {
   name: string;
   transcription?: string; // If audio, the transcribed text
   isProcessing: boolean;
+  research?: { url: string; retrievedAt: string; revisionDate?: string; query?: string };
 }
 
 export interface ChapterOutline {
@@ -22,7 +23,7 @@ export interface ChapterOutline {
   summary: string;
 }
 
-export type WritingStyle = 'standard' | 'literary' | 'humorous' | 'technical' | 'simple' | 'sarcastic';
+export type WritingStyle = 'standard' | 'literary' | 'humorous' | 'technical' | 'simple' | 'sarcastic' | 'educational_nonfiction';
 
 export type ManuscriptPov = 'first' | 'third_limited' | 'second' | 'omniscient';
 export type ManuscriptTense = 'past' | 'present';
@@ -55,6 +56,7 @@ export interface BookOutline {
 }
 
 export interface ChapterContent {
+  illustrationPrompt?: string;
   chapterNumber: number;
   title: string;
   content: string;
@@ -63,6 +65,10 @@ export interface ChapterContent {
 }
 
 export interface ProjectSettings {
+  coverArtPrompt?: string;
+  writingStyle?: WritingStyle;
+  automaticResearch?: boolean;
+  researchTopic?: string;
   pov?: ManuscriptPov;
   tense?: ManuscriptTense;
   targetDepth?: TargetDepth;
