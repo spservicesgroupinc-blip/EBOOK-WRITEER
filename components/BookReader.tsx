@@ -348,7 +348,7 @@ export const BookReader: React.FC<BookReaderProps> = ({
         
         {/* Sidebar */}
         <div className={`
-            flex-col bg-white border-r border-slate-200 flex-shrink-0 transition-all duration-300 z-30
+            flex-col bg-white border-r border-slate-200 flex-shrink-0 transition-all duration-300 z-50 md:z-30
             ${isSidebarOpen ? 'fixed inset-0 w-full flex md:static md:w-80' : 'hidden md:flex md:w-0 md:overflow-hidden'}
         `}>
           <div className="p-6 border-b border-slate-100 flex-shrink-0 flex justify-between items-start bg-slate-50/50">
@@ -356,7 +356,7 @@ export const BookReader: React.FC<BookReaderProps> = ({
                <h3 className="font-bold text-slate-900 font-serif mb-1 truncate">{outline.title}</h3>
                <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">Table of Contents</p>
              </div>
-             <button onClick={() => setIsSidebarOpen(false)} className="md:hidden p-1 text-slate-400 hover:text-slate-600"><X size={24} /></button>
+             <button aria-label="Close table of contents" onClick={() => setIsSidebarOpen(false)} className="md:hidden min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-500 hover:text-slate-700"><X size={24} /></button>
           </div>
 
           {/* Book Cover in Sidebar */}
@@ -525,7 +525,7 @@ export const BookReader: React.FC<BookReaderProps> = ({
                                 <div className="flex items-center gap-2 font-bold text-sm">
                                   <Wand2 size={16} className="animate-bounce" />
                                   <span>
-                                    Writing your story ({chapters.filter(c => !c.isGenerating && Boolean(c.content)).length} of {chapters.length} chapters done)...
+                                    Writing your book ({chapters.filter(c => !c.isGenerating && Boolean(c.content)).length} of {chapters.length} chapters done)...
                                   </span>
                                 </div>
                                 <span className="text-xs text-blue-600/80">

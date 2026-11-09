@@ -40,3 +40,18 @@ Save a cover-art prompt in project settings and a separate illustration prompt o
 each chapter. Include these instructions in generation and regeneration, alongside
 book/chapter context. Expose prompts in both the outline and reader where relevant.
 All art requests use free text models for SVG vector output; no paid image models.
+
+## Verification
+
+- 18 node:test checks cover prompt propagation, full editing instructions, research
+  retrieval/failure cases, server and browser free-model routing, and art direction.
+- Chromium workflow checks cover saved style/research/art prompts after reload,
+  research failures, outline-to-manuscript navigation, rendered SVG dimensions,
+  regeneration success/failure, nonfiction edit tools, and SVG sanitization.
+- Reader layouts checked at 320, 768, 1024, and 1440 pixels. Mobile cover settings
+  open and close above the app header; new controls have accessible labels.
+- Live Wikipedia retrieval verified through the local API. Model responses were
+  mocked for browser/integration checks because no local OpenRouter key is configured.
+  Live model output quality and rate-limit behavior remain unverified locally.
+- Production build and TypeScript checks pass. Existing build warnings concern a
+  missing index.css reference and large output chunks.
