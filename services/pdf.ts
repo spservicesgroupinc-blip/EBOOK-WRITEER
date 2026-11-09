@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { BookOutline, ChapterContent } from '../types';
 import { formatImageSrc } from './gemini';
+import { fitArtwork } from './artwork';
 
 /**
  * Normalizes Unicode smart punctuation and strips raw markdown syntax
@@ -60,7 +61,8 @@ async function rasterizeImageForPdf(
         }
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-        ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+        const fitted = fitArtwork(img.naturalWidth, img.naturalHeight, canvasWidth, canvasHeight);
+        ctx.drawImage(img, fitted.x, fitted.y, fitted.width, fitted.height);
         resolve(canvas.toDataURL('image/jpeg', 0.92));
       } catch {
         resolve(null);
@@ -179,7 +181,7 @@ export async function generateBookPdf(
   // ---------------------------------------------------------------------------
   let hasCoverPage = false;
   if (outline.coverImage) {
-    const coverJpeg = await rasterizeImageForPdf(outline.coverImage, 900, 1200);
+    const coverJpeg = await rasterizeImageForPdf(outline.coverImage, 1800, 2400);
     if (coverJpeg) {
       hasCoverPage = true;
       // Deep navy editorial background frame
@@ -320,7 +322,7 @@ export async function generateBookPdf(
 
     // Optional Chapter Illustration
     if (chap.image) {
-      const chapJpeg = await rasterizeImageForPdf(chap.image, 800, 450);
+      const chapJpeg = await rasterizeImageForPdf(chap.image, 1600, 900);
       if (chapJpeg) {
         const imgW = 128;
         const imgH = 72;

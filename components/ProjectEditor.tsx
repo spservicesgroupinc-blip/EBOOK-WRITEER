@@ -1,16 +1,15 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { BookProject, BookOutline, WritingStyle, User } from '../types';
-import { generateOutline, generateImage } from '../services/gemini';
+import { generateOutline } from '../services/gemini';
 import { PricingService, FreeModelOption } from '../services/pricing';
 import { isNonfiction } from '../services/prompts';
-import { buildCoverIllustrationPrompt } from '../services/illustrations';
 import { readApiJson } from '../services/http';
 import { SourceInput } from './SourceInput';
 import { OutlineBuilder } from './OutlineBuilder';
 import { BookReader } from './BookReader';
 import { PWAInstallButton } from './PWAInstallButton';
-import { BookOpen, PenTool, FileAudio, ArrowRight, ChevronLeft, Check, Wand2, Feather, AlertTriangle, Sparkles, Cpu, Palette } from 'lucide-react';
+import { BookOpen, PenTool, FileAudio, ArrowRight, ChevronLeft, Check, Wand2, Feather, AlertTriangle, Sparkles, Cpu } from 'lucide-react';
 
 interface ProjectEditorProps {
   project: BookProject;
@@ -56,20 +55,14 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
   const [researchWarnings, setResearchWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [freeTextModels, setFreeTextModels] = useState<FreeModelOption[]>(PricingService.getFreeModels());
-  const [freeCoverModels, setFreeCoverModels] = useState<FreeModelOption[]>(PricingService.getCoverModels());
   const [selectedTextModel, setSelectedTextModel] = useState<string>(
     project.settings?.textModel || PricingService.getSelectedTextModel()
-  );
-  const [selectedCoverModel, setSelectedCoverModel] = useState<string>(
-    project.settings?.coverModel || PricingService.getSelectedCoverModel()
   );
 
   useEffect(() => {
     const unsubscribe = PricingService.subscribe((summary) => {
       setSelectedTextModel(summary.selectedTextModel);
-      setSelectedCoverModel(summary.selectedCoverModel);
       setFreeTextModels([...PricingService.getFreeModels()]);
-      setFreeCoverModels([...PricingService.getCoverModels()]);
     });
     return () => {
       unsubscribe();
@@ -166,26 +159,9 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
     }
   };
 
-  const handleGenerateCover = async () => {
-    if (!project.outline) return;
-    setIsProcessing(true);
-    setError(null);
-    try {
-      const prompt = buildCoverIllustrationPrompt(project.outline, project.settings?.coverArtPrompt);
-      
-      const base64Image = await generateImage(prompt, '3:4', selectedCoverModel, 'cover');
-      updateProject({
-        outline: {
-          ...project.outline,
-          coverImage: base64Image
-        }
-      });
-    } catch (e: any) {
-      console.error("Cover generation failed", e);
-      setError("Failed to generate cover image. " + e.message);
-    } finally {
-      setIsProcessing(false);
-    }
+  const handleUpdateCoverArtwork = (coverImage: string | undefined) => {
+    const latest = projectRef.current;
+    if (latest.outline) updateProject({ outline: { ...latest.outline, coverImage } });
   };
 
   const handleUpdateOutline = (updatedOutline: BookOutline) => {
@@ -414,30 +390,9 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                      </p>
                    </div>
 
-                   <div>
-                     <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
-                       <Palette size={14} className="text-purple-600" />
-                       OpenRouter Cover Art &amp; Sketch Model (Free)
-                     </label>
-                     <select
-                       value={selectedCoverModel}
-                       onChange={(e) => {
-                         const val = e.target.value;
-                         setSelectedCoverModel(val);
-                         PricingService.setSelectedCoverModel(val);
-                         updateProject({ settings: { ...project.settings, coverModel: val } });
-                       }}
-                       className="w-full bg-white border border-slate-200 text-slate-800 text-sm rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-purple-500 font-medium"
-                     >
-                       {freeCoverModels.map((m) => (
-                         <option key={m.id} value={m.id}>
-                           {m.name}
-                         </option>
-                       ))}
-                     </select>
-                     <p className="text-[11px] text-slate-500 mt-1">
-                       {freeCoverModels.find((m) => m.id === selectedCoverModel)?.description || 'Free OpenRouter SVG Cover Designer'}
-                     </p>
+                   <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                     <p className="font-bold mb-1">Your Book Artwork</p>
+                     <p>Upload finished cover art in the outline or reader, and illustrations above each chapter. Artwork uploads are free.</p>
                    </div>
                  </div>
 
@@ -492,7 +447,7 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                  outline={project.outline} 
                  isGenerating={isProcessing}
                  onRegenerate={handleCreateOutline}
-                 onGenerateCover={handleGenerateCover}
+                 onCoverArtworkChange={handleUpdateCoverArtwork}
                  onUpdateOutline={handleUpdateOutline}
                />
                
@@ -529,7 +484,7 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                  const newChapters = projectRef.current.chapters.map(c => c.chapterNumber === updatedChapter.chapterNumber ? { ...c, ...(updates || updatedChapter) } : c);
                  updateProject({ chapters: newChapters });
               }}
-              onUpdateOutline={handleUpdateOutline}
+              onCoverArtworkChange={handleUpdateCoverArtwork}
               user={user}
             />
           )}

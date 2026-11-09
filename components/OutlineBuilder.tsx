@@ -1,10 +1,9 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { BookOutline, ChapterOutline, LoreVault } from '../types';
-import { formatImageSrc } from '../services/gemini';
-import { PricingService, FreeModelOption } from '../services/pricing';
 import { ArtDirectionInput } from './ArtDirectionInput';
-import { Sparkles, RefreshCw, Pencil, Check, X, Image as ImageIcon, Loader2, Plus, Trash2, BookMarked, UserCheck, Globe, KeyRound } from 'lucide-react';
+import { ArtworkUpload } from './ArtworkUpload';
+import { Sparkles, RefreshCw, Pencil, Check, X, Loader2, Plus, Trash2, BookMarked, UserCheck, Globe, KeyRound } from 'lucide-react';
 
 interface OutlineBuilderProps {
   coverArtPrompt?: string;
@@ -13,7 +12,7 @@ interface OutlineBuilderProps {
   outline: BookOutline;
   isGenerating: boolean;
   onRegenerate: () => void;
-  onGenerateCover: () => void;
+  onCoverArtworkChange: (image: string | undefined) => void;
   onUpdateOutline: (outline: BookOutline) => void;
 }
 
@@ -22,26 +21,13 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
   outline, nonfiction = false,
   isGenerating, 
   onRegenerate,
-  onGenerateCover,
+  onCoverArtworkChange,
   onUpdateOutline
 }) => {
   const [editingIndex, setEditingIndex] = useState<number | 'HEADER' | 'LORE' | null>(null);
   const [editData, setEditData] = useState<{title: string, summary: string} | null>(null);
   const [showLoreVault, setShowLoreVault] = useState<boolean>(true);
   const [editLore, setEditLore] = useState<LoreVault | null>(null);
-  const [coverModels, setCoverModels] = useState<FreeModelOption[]>(PricingService.getCoverModels());
-  const [selectedCoverModel, setSelectedCoverModel] = useState<string>(PricingService.getSelectedCoverModel());
-
-  useEffect(() => {
-    const unsubscribe = PricingService.subscribe((summary) => {
-      setSelectedCoverModel(summary.selectedCoverModel);
-      setCoverModels([...PricingService.getCoverModels()]);
-    });
-    return () => {
-      unsubscribe();
-    };
-  }, []);
-
   if (isGenerating) {
     return (
       <div className="flex flex-col items-center justify-center py-32 text-center space-y-8">
@@ -49,7 +35,7 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
         <div>
            <h3 className="text-2xl font-serif font-bold text-blue-950">Working on Your Book…</h3>
            <p className="text-slate-500 mt-2 max-w-md mx-auto font-medium">
-             Preparing your requested book structure or cover art.
+             Preparing your requested book structure.
            </p>
         </div>
       </div>
@@ -139,34 +125,6 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
         
         <div className="mt-8 mb-6 flex flex-wrap justify-center items-center gap-3">
            <span className="text-xs font-bold tracking-[0.2em] uppercase text-blue-600 bg-blue-50 px-3 py-1 rounded-full">Outline Draft</span>
-           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-full px-3 py-1">
-             <select
-               disabled={isGenerating}
-               value={selectedCoverModel}
-               onChange={(e) => {
-                 setSelectedCoverModel(e.target.value);
-                 PricingService.setSelectedCoverModel(e.target.value);
-               }}
-               className="text-xs font-medium text-slate-700 bg-transparent outline-none cursor-pointer max-w-[200px] truncate"
-               title="Choose Free OpenRouter AI Model for Cover Art"
-             >
-               {coverModels.map((m) => (
-                 <option key={m.id} value={m.id}>
-                   {m.name}
-                 </option>
-               ))}
-             </select>
-             <span className="text-slate-300">|</span>
-             <button 
-               onClick={onGenerateCover}
-               disabled={isGenerating}
-               className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
-               title="Generate Cover Art with selected OpenRouter model"
-             >
-               <ImageIcon size={14} />
-               {isGenerating ? 'Working…' : outline.coverImage ? 'Regenerate Cover' : 'Create Cover Art'}
-             </button>
-           </div>
         </div>
 
         {onCoverArtPromptChange && <div className="max-w-2xl mx-auto mb-6">
@@ -215,12 +173,9 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
           </div>
         )}
 
-        {/* Cover Image Preview */}
-        {outline.coverImage && (
-          <div className="mt-8 max-w-xs mx-auto shadow-2xl rounded-lg overflow-hidden border-4 border-white rotate-1 hover:rotate-0 transition-transform duration-500">
-            <img src={formatImageSrc(outline.coverImage)} alt="Book Cover" className="w-full h-auto" />
-          </div>
-        )}
+        <div className="mt-8 max-w-xl mx-auto rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-6">
+          <ArtworkUpload kind="cover" image={outline.coverImage} onChange={onCoverArtworkChange} disabled={isGenerating} />
+        </div>
       </div>
 
       {/* Story & Lore Vault Card */}

@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, Cpu, Palette, RefreshCw, ChevronUp, X } from 'lucide-react';
+import { CheckCircle2, Cpu, RefreshCw, ChevronUp, X } from 'lucide-react';
 import { PricingService, CostSummary, FreeModelOption, DEFAULT_TEXT_MODEL, DEFAULT_COVER_MODEL } from '../services/pricing';
 
 export const CostTracker: React.FC = () => {
@@ -15,20 +15,17 @@ export const CostTracker: React.FC = () => {
   });
   const [isOpen, setIsOpen] = useState(false);
   const [textModels, setTextModels] = useState<FreeModelOption[]>(PricingService.getFreeModels());
-  const [coverModels, setCoverModels] = useState<FreeModelOption[]>(PricingService.getCoverModels());
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     const unsubscribe = PricingService.subscribe((summary) => {
       setCosts({ ...summary });
       setTextModels([...PricingService.getFreeModels()]);
-      setCoverModels([...PricingService.getCoverModels()]);
     });
 
     // Fetch live free models from OpenRouter on mount
     PricingService.refreshLiveFreeModels().then(() => {
       setTextModels([...PricingService.getFreeModels()]);
-      setCoverModels([...PricingService.getCoverModels()]);
     });
 
     return () => {
@@ -41,7 +38,6 @@ export const CostTracker: React.FC = () => {
     setIsRefreshing(true);
     await PricingService.refreshLiveFreeModels();
     setTextModels([...PricingService.getFreeModels()]);
-    setCoverModels([...PricingService.getCoverModels()]);
     setIsRefreshing(false);
   };
 
@@ -109,26 +105,7 @@ export const CostTracker: React.FC = () => {
               </p>
             </div>
 
-            <div>
-              <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                <Palette size={12} className="text-purple-600" />
-                Cover Art &amp; Illustration AI Model (Free)
-              </label>
-              <select
-                value={costs.selectedCoverModel}
-                onChange={(e) => PricingService.setSelectedCoverModel(e.target.value)}
-                className="w-full min-h-[44px] bg-slate-50 border border-slate-200 text-slate-800 rounded-xl px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-purple-500"
-              >
-                {coverModels.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-              <p className="text-[11px] text-slate-400 mt-1 truncate">
-                {coverModels.find((m) => m.id === costs.selectedCoverModel)?.description || costs.selectedCoverModel}
-              </p>
-            </div>
+            <p className="text-xs text-slate-600">Upload your own cover art and chapter illustrations. Artwork uploads do not use AI credits.</p>
 
             <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
               <span>Session Tokens: {formatTokens(costs.totalTokens)}</span>
