@@ -1,5 +1,5 @@
 // Server-only. Fetch fixed public API hosts; never follow URLs from search results.
-import { SourceType, type Source } from '../types';
+import { SourceType, type Source } from '../types.js';
 
 export async function retrieveResearch(topic: string, fetcher: typeof fetch = fetch): Promise<{ sources: Source[]; warnings: string[] }> {
   if (typeof topic !== 'string' || !topic.trim() || topic.trim().length > 200) {

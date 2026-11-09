@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { retrieveResearch } from '../services/wikipediaResearch';
+import { retrieveResearch } from '../services/wikipediaResearch.js';
 
 const OPENROUTER_MODEL = 'google/gemma-4-26b-a4b-it:free';
 

@@ -5,6 +5,7 @@ import { generateOutline, generateImage } from '../services/gemini';
 import { PricingService, FreeModelOption } from '../services/pricing';
 import { isNonfiction } from '../services/prompts';
 import { buildCoverIllustrationPrompt } from '../services/illustrations';
+import { readApiJson } from '../services/http';
 import { SourceInput } from './SourceInput';
 import { OutlineBuilder } from './OutlineBuilder';
 import { BookReader } from './BookReader';
@@ -112,7 +113,7 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ topic: researchTopic }), signal: AbortSignal.timeout(35000),
     });
-    const data = await response.json();
+    const data = await readApiJson(response, 'Research service');
     if (!response.ok || !Array.isArray(data.sources) || !data.sources.length) {
       throw new Error(data.error || 'No research sources were returned. Try another topic.');
     }

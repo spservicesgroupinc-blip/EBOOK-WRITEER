@@ -13,6 +13,7 @@ import { buildChapterPrompt, buildOutlinePrompt, buildRefinementPrompt, formatSo
 import { PricingService } from "./pricing";
 import { BackgroundKeeper } from "./backgroundKeeper";
 import { prepareIllustrationSvg } from './illustrations';
+import { readApiJson } from './http';
 
 // Non-throttled delay via Web Worker so background tabs don't stall
 const delay = (ms: number) => BackgroundKeeper.unthrottledDelay(ms);
@@ -39,17 +40,11 @@ let cachedApiKey: string | null = null;
 
 async function getClientOpenRouterKey(): Promise<string> {
   if (cachedApiKey) return cachedApiKey;
-  try {
-    const res = await fetch('/api/client-config');
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.apiKey) {
-        cachedApiKey = String(data.apiKey).trim();
-        return cachedApiKey;
-      }
-    }
-  } catch {
-    // Ignore and fall back
+  const res = await fetch('/api/client-config');
+  const data = await readApiJson(res, 'App configuration service');
+  if (data?.apiKey) {
+    cachedApiKey = String(data.apiKey).trim();
+    return cachedApiKey;
   }
   return '';
 }
@@ -378,10 +373,7 @@ async function callOpenRouterDirectFromBrowser(
         }),
       });
 
-      const data = await response.json();
-      if (!response.ok || data?.error) {
-        throw new Error(data?.error?.message || `OpenRouter HTTP ${response.status}`);
-      }
+      const data = await readApiJson(response, 'OpenRouter');
 
       const msg = data?.choices?.[0]?.message;
       const rawText = String(msg?.content || msg?.reasoning || '').trim();

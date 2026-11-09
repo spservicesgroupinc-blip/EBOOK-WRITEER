@@ -43,7 +43,7 @@ All art requests use free text models for SVG vector output; no paid image model
 
 ## Verification
 
-- 18 node:test checks cover prompt propagation, full editing instructions, research
+- 25 node:test checks cover prompt propagation, full editing instructions, research
   retrieval/failure cases, server and browser free-model routing, and art direction.
 - Chromium workflow checks cover saved style/research/art prompts after reload,
   research failures, outline-to-manuscript navigation, rendered SVG dimensions,
@@ -55,3 +55,14 @@ All art requests use free text models for SVG vector output; no paid image model
   Live model output quality and rate-limit behavior remain unverified locally.
 - Production build and TypeScript checks pass. Existing build warnings concern a
   missing index.css reference and large output chunks.
+
+## Server startup regression
+
+The API's extensionless research-module import worked under tsx but failed after
+compilation under native Node ESM. Use emitted `.js` extensions for the API's local
+runtime dependencies. The native-runtime test transpiles the API and its dependencies
+into a temporary module package and invokes health/research without tsx.
+
+Generation configuration, research, and OpenRouter responses are parsed defensively:
+plain-text/HTML server failures retain a useful HTTP status and retry instruction,
+instead of throwing a JSON syntax error or being mistaken for a missing API key.
