@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { BookProject, BookOutline, WritingStyle, User } from '../types';
 import { generateOutline } from '../services/gemini';
-import { PricingService, FreeModelOption } from '../services/pricing';
+import { PricingService, ModelOption } from '../services/pricing';
 import { isNonfiction } from '../services/prompts';
 import { readApiJson } from '../services/http';
 import { SourceInput } from './SourceInput';
@@ -54,7 +54,7 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
   const researchTopic = project.settings?.researchTopic?.trim() || '';
   const [researchWarnings, setResearchWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [freeTextModels, setFreeTextModels] = useState<FreeModelOption[]>(PricingService.getFreeModels());
+  const [textModels, setTextModels] = useState<ModelOption[]>(PricingService.getModels());
   const [selectedTextModel, setSelectedTextModel] = useState<string>(
     project.settings?.textModel || PricingService.getSelectedTextModel()
   );
@@ -62,7 +62,10 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
   useEffect(() => {
     const unsubscribe = PricingService.subscribe((summary) => {
       setSelectedTextModel(summary.selectedTextModel);
-      setFreeTextModels([...PricingService.getFreeModels()]);
+      setTextModels([...PricingService.getModels()]);
+    });
+    PricingService.refreshLiveModels().then(() => {
+      setTextModels([...PricingService.getModels()]);
     });
     return () => {
       unsubscribe();
@@ -296,7 +299,7 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                          onChange={e => updateProject({ settings: { ...project.settings, automaticResearch: e.target.checked } })} />
                        Automatically research this topic for free
                      </label>
-                     <p className="text-xs text-slate-600">Searches English Wikipedia and saves dated excerpts with source links. This is background research, not a live news feed or primary-source fact check. Add official reports or recent data as notes for stronger coverage. All AI uses OpenRouter free models; no paid search plugin.</p>
+                     <p className="text-xs text-slate-600">Searches English Wikipedia and saves dated excerpts with source links. This is background research, not a live news feed or primary-source fact check. Add official reports or recent data as notes for stronger coverage. All AI uses your chosen OpenRouter model; no paid search plugin.</p>
                      <label htmlFor="research-topic" className="block text-sm font-medium text-slate-700">Research topic</label>
                      <input id="research-topic" maxLength={200} value={project.settings?.researchTopic || ''}
                        onChange={e => updateProject({ settings: { ...project.settings, researchTopic: e.target.value } })}
@@ -362,12 +365,12 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                    </div>
                  </div>
 
-                 {/* OpenRouter Free AI Model Selectors */}
+                 {/* OpenRouter AI Model Selectors */}
                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-200/80">
                    <div>
                      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
                        <Cpu size={14} className="text-blue-600" />
-                       OpenRouter Writing &amp; Outline Model (Free)
+                       OpenRouter Writing &amp; Outline Model
                      </label>
                      <select
                        value={selectedTextModel}
@@ -379,14 +382,19 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                        }}
                        className="w-full bg-white border border-slate-200 text-slate-800 text-sm rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                      >
-                       {freeTextModels.map((m) => (
+                       {textModels.map((m) => (
                          <option key={m.id} value={m.id}>
-                           {m.name}
+                           {m.isFree ? m.name : `${m.name} — paid`}
                          </option>
                        ))}
                      </select>
                      <p className="text-[11px] text-slate-500 mt-1">
-                       {freeTextModels.find((m) => m.id === selectedTextModel)?.description || 'Free OpenRouter LLM'}
+                       {textModels.find((m) => m.id === selectedTextModel)?.description || 'OpenRouter model'}
+                     </p>
+                     <p className="text-[11px] text-slate-500 mt-0.5">
+                       {PricingService.isModelFree(selectedTextModel)
+                         ? 'Free on OpenRouter — no charge for generation.'
+                         : 'Paid model — usage is billed to your OpenRouter account.'}
                      </p>
                    </div>
 
@@ -400,7 +408,7 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                  <div className="flex items-center justify-between bg-white p-3.5 rounded-lg border border-slate-200">
                    <div>
                      <div className="text-sm font-bold text-slate-800">Two-Pass AI Polish Pass (Optional)</div>
-                     <div className="text-xs text-slate-500">Executes a secondary style refinement pass on every chapter (uses 2x API requests — leave unchecked for fastest Free Tier generation).</div>
+                     <div className="text-xs text-slate-500">Executes a secondary style refinement pass on every chapter (uses 2x API requests — leave unchecked for fastest generation).</div>
                    </div>
                    <input
                      type="checkbox"

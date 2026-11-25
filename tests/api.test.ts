@@ -22,7 +22,7 @@ test('research route validates requests without calling a model or provider', as
   assert.equal(calls, 0);
 });
 
-test('server-side generation also enforces zero-price routing and rejects paid overrides', async () => {
+test('server-side generation accepts any OpenRouter model without a zero-price cap', async () => {
   process.env.OPENROUTER_API_KEY = 'test-key-not-real';
   const bodies: any[] = [];
   globalThis.fetch = async (_input, init) => {
@@ -30,9 +30,26 @@ test('server-side generation also enforces zero-price routing and rejects paid o
     return Response.json({ choices: [{ message: { content: 'A generated result.' } }] });
   };
   assert.equal((await request('/api/gemini/generate-text', { parts: [{ text: 'Write' }], model: 'openrouter/free' })).status, 200);
-  assert.deepEqual(bodies[0].provider.max_price, { prompt: 0, completion: 0 });
+  assert.equal(bodies[0].provider.max_price, undefined);
   assert.equal(bodies[0].plugins, undefined);
-  const rejected = await request('/api/gemini/generate-text', { parts: [{ text: 'Write' }], model: 'provider/paid' });
-  assert.match(rejected.payload.error, /Only OpenRouter free/);
-  assert.equal(bodies.length, 1);
+  const paid = await request('/api/gemini/generate-text', { parts: [{ text: 'Write' }], model: 'provider/paid' });
+  assert.equal(paid.status, 200);
+  assert.equal(bodies[1].model, 'provider/paid');
+  assert.equal(bodies[1].provider.max_price, undefined);
+  assert.equal(bodies.length, 2);
+});
+
+test('model catalog returns free and paid models with per-million pricing', async () => {
+  globalThis.fetch = async () => Response.json({ data: [
+    { id: 'vendor/paid-model', name: 'Paid Model', pricing: { prompt: '0.000003', completion: '0.000015' }, architecture: { modality: 'text->text' } },
+    { id: 'vendor/free-model:free', name: 'Free Model', pricing: { prompt: '0', completion: '0' }, architecture: { modality: 'text->text' } },
+  ] });
+  const result = await request('/api/openrouter/models', {}, 'GET');
+  assert.equal(result.status, 200);
+  assert.equal(result.payload.models.length, 2);
+  const paid = result.payload.models.find((m: any) => m.id === 'vendor/paid-model');
+  assert.equal(paid.isFree, false);
+  assert.deepEqual(paid.pricing, { prompt: 3, completion: 15 });
+  const free = result.payload.models.find((m: any) => m.id === 'vendor/free-model:free');
+  assert.equal(free.isFree, true);
 });

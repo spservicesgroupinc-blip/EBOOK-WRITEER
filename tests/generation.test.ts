@@ -44,14 +44,13 @@ test('actual outline request receives nonfiction and special instructions', asyn
   assert.doesNotMatch(requests[0].messages[0].content, /Detailed narrative beats and plot points/);
 });
 
-test('draft, fallback, and automatic polish all preserve nonfiction and zero model prices', async () => {
+test('draft, fallback, and automatic polish all preserve nonfiction instructions', async () => {
   const requests = mockModel(['A sourced draft. '.repeat(15), 'A sourced polished chapter. '.repeat(15)], true);
   const result = await writeChapter(chapter, outline, sources, { style: 'educational_nonfiction', twoPassPolish: true, customInstruction: 'Use dates carefully.' });
   assert.match(result, /polished chapter/);
   assert.equal(requests.length, 3);
   for (const request of requests) {
-    assert.ok(request.model.endsWith(':free') || request.model === 'openrouter/free');
-    assert.deepEqual(request.provider.max_price, { prompt: 0, completion: 0 });
+    assert.equal(request.provider.max_price, undefined);
     assert.equal(request.plugins, undefined);
     assert.match(request.messages[0].content, /Use dates carefully/);
     assert.match(request.messages[0].content, /recorded value was 123/);
@@ -72,8 +71,11 @@ test('malformed outlines fail explicitly instead of inventing a story outline', 
   await assert.rejects(() => generateOutline(sources, '', { style: 'educational_nonfiction' }), /usable chapter outline/);
 });
 
-test('paid model overrides are rejected before any model request', async () => {
-  const requests = mockModel([]);
-  await assert.rejects(() => refineChapterText('Draft', 'Improve', 'provider/paid-model'), /Only OpenRouter free/);
-  assert.equal(requests.length, 0);
+test('paid model overrides are sent through without a zero-price cap', async () => {
+  const requests = mockModel(['Polished.']);
+  const result = await refineChapterText('Draft', 'Improve', 'provider/paid-model');
+  assert.equal(result, 'Polished.');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].model, 'provider/paid-model');
+  assert.equal(requests[0].provider.max_price, undefined);
 });

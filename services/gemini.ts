@@ -328,9 +328,6 @@ async function callOpenRouterDirectFromBrowser(
   prompt: string,
   requestedModel?: string
 ): Promise<{ text: string; model: string; usage: { promptTokenCount: number; candidatesTokenCount: number } }> {
-  if (requestedModel && requestedModel !== 'openrouter/free' && !requestedModel.endsWith(':free')) {
-    throw new Error('Only OpenRouter free models are supported. Select a free writing model.');
-  }
   const apiKey = await getClientOpenRouterKey();
   if (!apiKey) {
     throw new Error(
@@ -338,20 +335,26 @@ async function callOpenRouterDirectFromBrowser(
     );
   }
 
-  const primary =
+  const explicitModel =
     requestedModel && requestedModel.trim() && requestedModel !== 'instant-editorial-svg'
       ? requestedModel.trim()
-      : 'google/gemma-4-26b-a4b-it:free';
+      : '';
 
-  const modelsToTry = Array.from(
-    new Set([
-      primary,
-      'google/gemma-4-26b-a4b-it:free',
-      'nvidia/nemotron-3.5-lightning:free',
-      'google/gemma-4-31b-it:free',
-      'openrouter/free',
-    ])
-  );
+  const primary = explicitModel || 'google/gemma-4-26b-a4b-it:free';
+
+  // Only fall back to other models when no model was explicitly chosen, so a
+  // user-selected (possibly paid) model is never silently swapped.
+  const modelsToTry = explicitModel
+    ? [primary]
+    : Array.from(
+        new Set([
+          primary,
+          'google/gemma-4-26b-a4b-it:free',
+          'nvidia/nemotron-3.5-lightning:free',
+          'google/gemma-4-31b-it:free',
+          'openrouter/free',
+        ])
+      );
 
   let lastErr: any;
   for (const currentModel of modelsToTry) {
@@ -367,7 +370,7 @@ async function callOpenRouterDirectFromBrowser(
         body: JSON.stringify({
           model: currentModel,
           messages: [{ role: 'user', content: prompt }],
-          provider: { sort: 'throughput', max_price: { prompt: 0, completion: 0 } },
+          provider: { sort: 'throughput' },
           reasoning: { effort: 'low', exclude: true },
           stream: false,
         }),
@@ -395,7 +398,7 @@ async function callOpenRouterDirectFromBrowser(
     }
   }
 
-  throw lastErr || new Error('All free OpenRouter models are currently busy. Please try again.');
+  throw lastErr || new Error('OpenRouter model request failed. Please try again or choose another model.');
 }
 
 async function fetchApiJson(url: string, payload: Record<string, any>): Promise<any> {
@@ -641,7 +644,7 @@ export const writeChapter = async (
     throw new Error(`Failed to write ${chapterLabel} after multiple attempts. Last error: ${lastError?.message}`);
   }
 
-  // Optional Two-Pass Generation (disabled by default to conserve Free Tier RPM quota)
+      // Optional Two-Pass Generation (disabled by default to conserve API rate limits)
   if (twoPassPolish) {
     try {
       await delay(1200);

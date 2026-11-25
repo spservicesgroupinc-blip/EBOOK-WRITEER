@@ -8,12 +8,23 @@ export interface UsageRecord {
   type: 'text' | 'image' | 'audio' | 'search';
 }
 
-export interface FreeModelOption {
+/** USD price per 1M tokens, matching how OpenRouter pricing is displayed. */
+export interface ModelPricing {
+  prompt: number;
+  completion: number;
+}
+
+export interface ModelOption {
   id: string;
   name: string;
   description: string;
   modality?: string;
+  isFree?: boolean;
+  pricing?: ModelPricing;
 }
+
+/** @deprecated Use ModelOption. Kept so older imports keep compiling. */
+export type FreeModelOption = ModelOption;
 
 export interface CostSummary {
   totalCost: number;
@@ -28,7 +39,10 @@ export interface CostSummary {
 export const DEFAULT_TEXT_MODEL = 'google/gemma-4-26b-a4b-it:free';
 export const DEFAULT_COVER_MODEL = 'instant-editorial-svg';
 
-export const DEFAULT_FREE_MODELS: FreeModelOption[] = [
+export const FREE_PRICING: ModelPricing = { prompt: 0, completion: 0 };
+
+/** Offline/fallback catalog of curated zero-cost models. */
+export const CURATED_MODELS: ModelOption[] = [
   {
     id: 'nvidia/nemotron-3-ultra-550b-a55b:free',
     name: 'NVIDIA: Nemotron 3 Ultra 550B (Free)',
@@ -113,26 +127,50 @@ export const DEFAULT_FREE_MODELS: FreeModelOption[] = [
     description: 'Automatically routes to the fastest available free model',
     modality: 'text+image->text',
   },
-];
+].map((model) => ({ ...model, pricing: FREE_PRICING, isFree: true }));
 
-export const COVER_ONLY_EXTRA_OPTIONS: FreeModelOption[] = [
+export const COVER_ONLY_EXTRA_OPTIONS: ModelOption[] = [
   {
     id: 'instant-editorial-svg',
-    name: 'Automatic (Uses Free Writing Model)',
-    description: 'Uses your selected free writing model to create original SVG cover art and chapter illustrations',
+    name: 'Automatic (Uses Selected Writing Model)',
+    description: 'Uses your selected writing model to create original SVG cover art and chapter illustrations',
     modality: 'svg',
   },
-];
+].map((model) => ({ ...model, pricing: FREE_PRICING, isFree: true }));
 
 const STORAGE_KEY = 'ebookai_cost_history';
 const TEXT_MODEL_KEY = 'ebookai_openrouter_text_model';
 const COVER_MODEL_KEY = 'ebookai_openrouter_cover_model';
 
+const normalizePricing = (pricing?: Partial<ModelPricing> | null): ModelPricing => {
+  const prompt = Number(pricing?.prompt);
+  const completion = Number(pricing?.completion);
+  return {
+    prompt: Number.isFinite(prompt) && prompt > 0 ? prompt : 0,
+    completion: Number.isFinite(completion) && completion > 0 ? completion : 0,
+  };
+};
+
+const withPricing = (model: ModelOption): ModelOption => {
+  const pricing = normalizePricing(model.pricing);
+  return {
+    ...model,
+    pricing,
+    isFree: pricing.prompt === 0 && pricing.completion === 0,
+  };
+};
+
+/** Free models first, then paid models, each ordered by display name. */
+const sortModels = (models: ModelOption[]): ModelOption[] =>
+  [...models].sort((a, b) => {
+    if (Boolean(a.isFree) !== Boolean(b.isFree)) return a.isFree ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
 export const PricingService = {
   sessionCost: 0,
-  isFreeTier: true,
   lastModelUsed: DEFAULT_TEXT_MODEL,
-  freeModels: [...DEFAULT_FREE_MODELS] as FreeModelOption[],
+  models: CURATED_MODELS.map(withPricing) as ModelOption[],
   listeners: new Set<(summary: CostSummary) => void>(),
 
   getSelectedTextModel(): string {
@@ -169,42 +207,60 @@ export const PricingService = {
     this.notifyCurrent();
   },
 
-  getFreeModels(): FreeModelOption[] {
-    return this.freeModels;
+  getModels(): ModelOption[] {
+    return this.models;
   },
 
-  getCoverModels(): FreeModelOption[] {
-    return [...this.freeModels, ...COVER_ONLY_EXTRA_OPTIONS];
+  getCoverModels(): ModelOption[] {
+    return [...this.models, ...COVER_ONLY_EXTRA_OPTIONS];
   },
 
-  async refreshLiveFreeModels(): Promise<FreeModelOption[]> {
+  getModel(modelId: string): ModelOption | undefined {
+    return this.models.find((model) => model.id === modelId);
+  },
+
+  getModelPricing(modelId: string): ModelPricing {
+    return this.getModel(modelId)?.pricing || FREE_PRICING;
+  },
+
+  isModelFree(modelId: string): boolean {
+    const model = this.getModel(modelId);
+    if (model) return Boolean(model.isFree);
+    return modelId === 'openrouter/free' || modelId.endsWith(':free');
+  },
+
+  async refreshLiveModels(): Promise<ModelOption[]> {
     try {
       const res = await fetch('/api/openrouter/models');
-      if (!res.ok) return this.freeModels;
+      if (!res.ok) return this.models;
       const data = await res.json();
       if (Array.isArray(data.models) && data.models.length > 0) {
-        const mergedMap = new Map<string, FreeModelOption>();
-        // Keep curated descriptions first
-        for (const item of DEFAULT_FREE_MODELS) {
-          mergedMap.set(item.id, item);
+        const merged = new Map<string, ModelOption>();
+        // Seed with curated entries so offline-friendly names/descriptions survive.
+        for (const item of CURATED_MODELS) {
+          merged.set(item.id, withPricing(item));
         }
         for (const live of data.models) {
-          if (!mergedMap.has(live.id)) {
-            mergedMap.set(live.id, {
-              id: live.id,
-              name: live.name || live.id,
-              description: live.description || 'Live OpenRouter free model',
-              modality: live.modality || 'text->text',
-            });
-          }
+          if (!live?.id) continue;
+          const existing = merged.get(live.id);
+          merged.set(
+            live.id,
+            withPricing({
+              id: String(live.id),
+              name: live.name || existing?.name || String(live.id),
+              description: live.description || existing?.description || 'OpenRouter model',
+              modality: live.modality || existing?.modality || 'text->text',
+              pricing: live.pricing || existing?.pricing,
+            })
+          );
         }
-        this.freeModels = Array.from(mergedMap.values());
+        this.models = sortModels(Array.from(merged.values()));
         this.notifyCurrent();
       }
     } catch {
-      // Keep default curated list if offline
+      // Keep curated list if offline
     }
-    return this.freeModels;
+    return this.models;
   },
 
   getHistory(): { totalCost: number; totalTokens: number } {
@@ -225,47 +281,44 @@ export const PricingService = {
   },
 
   trackUsage(model: string, inputCount: number, outputCount: number) {
-    const cost = 0; // All OpenRouter :free models are $0.00
-    this.lastModelUsed = model || this.getSelectedTextModel();
-    this.sessionCost += cost;
-    const history = this.updateStorage(cost, inputCount + outputCount);
+    const resolved = model || this.getSelectedTextModel();
+    // OpenRouter may echo a canonical id; fall back to the selected model's pricing.
+    const pricing =
+      this.getModel(resolved)?.pricing ||
+      this.getModel(this.getSelectedTextModel())?.pricing ||
+      FREE_PRICING;
+    const cost =
+      (Math.max(0, inputCount) / 1_000_000) * pricing.prompt +
+      (Math.max(0, outputCount) / 1_000_000) * pricing.completion;
 
-    this.notify({
+    this.lastModelUsed = resolved;
+    this.sessionCost += cost;
+    this.updateStorage(cost, inputCount + outputCount);
+
+    this.notifyCurrent();
+  },
+
+  currentSummary(): CostSummary {
+    const history = this.getHistory();
+    const selectedTextModel = this.getSelectedTextModel();
+    return {
       sessionCost: this.sessionCost,
       totalCost: history.totalCost,
       totalTokens: history.totalTokens,
-      isFreeTier: this.isFreeTier,
+      isFreeTier: this.isModelFree(selectedTextModel),
       lastModelUsed: this.lastModelUsed,
-      selectedTextModel: this.getSelectedTextModel(),
+      selectedTextModel,
       selectedCoverModel: this.getSelectedCoverModel(),
-    });
+    };
   },
 
   notifyCurrent() {
-    const history = this.getHistory();
-    this.notify({
-      sessionCost: this.sessionCost,
-      totalCost: history.totalCost,
-      totalTokens: history.totalTokens,
-      isFreeTier: this.isFreeTier,
-      lastModelUsed: this.lastModelUsed,
-      selectedTextModel: this.getSelectedTextModel(),
-      selectedCoverModel: this.getSelectedCoverModel(),
-    });
+    this.notify(this.currentSummary());
   },
 
   subscribe(callback: (summary: CostSummary) => void) {
     this.listeners.add(callback);
-    const history = this.getHistory();
-    callback({
-      sessionCost: this.sessionCost,
-      totalCost: history.totalCost,
-      totalTokens: history.totalTokens,
-      isFreeTier: this.isFreeTier,
-      lastModelUsed: this.lastModelUsed,
-      selectedTextModel: this.getSelectedTextModel(),
-      selectedCoverModel: this.getSelectedCoverModel(),
-    });
+    callback(this.currentSummary());
     return () => this.listeners.delete(callback);
   },
 

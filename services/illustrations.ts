@@ -28,9 +28,9 @@ Use static drawing elements and presentation attributes. No scripts, event handl
 /** Parse in an inert XML document, then permit only static SVG drawing primitives. */
 export function prepareIllustrationSvg(raw: string, width = 800, height = 450): string {
   const match = raw.match(/<svg\b[\s\S]*?<\/svg>/i);
-  if (!match) throw new Error('The free model did not return an SVG illustration. Try another free art model.');
+  if (!match) throw new Error('The model did not return an SVG illustration. Try another art model.');
   const doc = new DOMParser().parseFromString(match[0], 'image/svg+xml');
-  if (doc.querySelector('parsererror')) throw new Error('The model returned invalid illustration markup. Please regenerate or choose another free art model.');
+  if (doc.querySelector('parsererror')) throw new Error('The model returned invalid illustration markup. Please regenerate or choose another art model.');
   const root = doc.documentElement;
   if (root.localName !== 'svg' || root.namespaceURI !== 'http://www.w3.org/2000/svg') {
     throw new Error('The model returned an invalid SVG namespace. Please regenerate.');
@@ -47,7 +47,7 @@ export function prepareIllustrationSvg(raw: string, width = 800, height = 450): 
   }
   const hasDrawing = [...root.querySelectorAll('path,circle,ellipse,rect,line,polyline,polygon,text')]
     .some(element => !element.closest('defs,clipPath'));
-  if (!hasDrawing) throw new Error('The model returned an empty illustration. Try another free art model.');
+  if (!hasDrawing) throw new Error('The model returned an empty illustration. Try another art model.');
   root.setAttribute('width', String(width));
   root.setAttribute('height', String(height));
   if (!root.hasAttribute('viewBox')) root.setAttribute('viewBox', `0 0 ${width} ${height}`);

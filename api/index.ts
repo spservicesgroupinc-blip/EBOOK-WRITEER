@@ -371,9 +371,6 @@ const extractJsonObject = (raw: string, fallbackContext = ''): any => {
 };
 
 async function runOpenRouterChat(userContent: string, requestedModel?: string) {
-  if (requestedModel && requestedModel !== 'openrouter/free' && !requestedModel.endsWith(':free')) {
-    throw new Error('Only OpenRouter free models are supported. Select a free model.');
-  }
   const apiKey = resolveOpenRouterApiKey();
   if (!apiKey) {
     throw new Error(
@@ -381,20 +378,26 @@ async function runOpenRouterChat(userContent: string, requestedModel?: string) {
     );
   }
 
-  const primaryModel =
+  const explicitModel =
     requestedModel && requestedModel.trim() && requestedModel !== 'instant-editorial-svg'
       ? requestedModel.trim()
-      : OPENROUTER_MODEL;
+      : '';
 
-  const candidateModels = Array.from(
-    new Set([
-      primaryModel,
-      'google/gemma-4-26b-a4b-it:free',
-      'nvidia/nemotron-3.5-lightning:free',
-      'google/gemma-4-31b-it:free',
-      'openrouter/free',
-    ])
-  );
+  const primaryModel = explicitModel || OPENROUTER_MODEL;
+
+  // Only fall back to other models when the caller did not pick a specific model,
+  // so a user-selected (possibly paid) model is never silently swapped.
+  const candidateModels = explicitModel
+    ? [primaryModel]
+    : Array.from(
+        new Set([
+          primaryModel,
+          'google/gemma-4-26b-a4b-it:free',
+          'nvidia/nemotron-3.5-lightning:free',
+          'google/gemma-4-31b-it:free',
+          'openrouter/free',
+        ])
+      );
 
   const startTime = Date.now();
   let lastErr: any;
@@ -431,7 +434,6 @@ async function runOpenRouterChat(userContent: string, requestedModel?: string) {
           ],
           provider: {
             sort: 'throughput',
-            max_price: { prompt: 0, completion: 0 },
           },
           reasoning: {
             effort: 'low',
@@ -481,7 +483,7 @@ async function runOpenRouterChat(userContent: string, requestedModel?: string) {
     }
   }
 
-  throw lastErr || new Error('All free OpenRouter models were busy. Please try again.');
+  throw lastErr || new Error('OpenRouter model request failed. Please try again or choose another model.');
 }
 
 const escapeXml = (unsafe: string): string =>
@@ -688,7 +690,7 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    // 0. Live Free OpenRouter Models Catalog
+    // 0. Live OpenRouter Models Catalog (free and paid, with pricing)
     if (url.includes('/openrouter/models')) {
       try {
         const response = await fetch('https://openrouter.ai/api/v1/models');
@@ -698,26 +700,36 @@ export default async function handler(req: any, res: any) {
         const data: any = await response.json();
         const rawList = Array.isArray(data?.data) ? data.data : [];
 
-        const freeModels = rawList
+        const toPerMillion = (value: any): number => {
+          const perToken = parseFloat(String(value));
+          return Number.isFinite(perToken) && perToken > 0 ? perToken * 1_000_000 : 0;
+        };
+
+        const models = rawList
           .filter((m: any) => {
             const id = String(m?.id || '');
             if (!id) return false;
             if (id.includes('content-safety') || id.includes('lyria')) return false;
-            const isFreeSuffix = id.endsWith(':free') || id === 'openrouter/free';
-            const isZeroPrice =
-              m?.pricing &&
-              parseFloat(m.pricing.prompt) === 0 &&
-              parseFloat(m.pricing.completion) === 0;
-            return isFreeSuffix || isZeroPrice;
+            return true;
           })
-          .map((m: any) => ({
-            id: String(m.id),
-            name: String(m.name || m.id),
-            description: String(m.description || '').slice(0, 140) || 'Free OpenRouter AI Model',
-            modality: String(m.architecture?.modality || 'text->text'),
-          }));
+          .map((m: any) => {
+            const prompt = toPerMillion(m?.pricing?.prompt);
+            const completion = toPerMillion(m?.pricing?.completion);
+            return {
+              id: String(m.id),
+              name: String(m.name || m.id),
+              description: String(m.description || '').slice(0, 140) || 'OpenRouter AI Model',
+              modality: String(m.architecture?.modality || 'text->text'),
+              isFree: prompt === 0 && completion === 0,
+              pricing: { prompt, completion },
+            };
+          })
+          .sort((a: any, b: any) => {
+            if (a.isFree !== b.isFree) return a.isFree ? -1 : 1;
+            return String(a.name).localeCompare(String(b.name));
+          });
 
-        return sendJson(res, 200, { models: freeModels });
+        return sendJson(res, 200, { models });
       } catch {
         return sendJson(res, 200, { models: [] });
       }

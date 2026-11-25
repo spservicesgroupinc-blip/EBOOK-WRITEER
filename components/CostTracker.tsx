@@ -1,31 +1,23 @@
 
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, Cpu, RefreshCw, ChevronUp, X } from 'lucide-react';
-import { PricingService, CostSummary, FreeModelOption, DEFAULT_TEXT_MODEL, DEFAULT_COVER_MODEL } from '../services/pricing';
+import { PricingService, CostSummary, ModelOption } from '../services/pricing';
 
 export const CostTracker: React.FC = () => {
-  const [costs, setCosts] = useState<CostSummary>({
-    sessionCost: 0,
-    totalCost: 0,
-    totalTokens: 0,
-    isFreeTier: true,
-    lastModelUsed: DEFAULT_TEXT_MODEL,
-    selectedTextModel: PricingService.getSelectedTextModel(),
-    selectedCoverModel: PricingService.getSelectedCoverModel(),
-  });
+  const [costs, setCosts] = useState<CostSummary>(() => PricingService.currentSummary());
   const [isOpen, setIsOpen] = useState(false);
-  const [textModels, setTextModels] = useState<FreeModelOption[]>(PricingService.getFreeModels());
+  const [textModels, setTextModels] = useState<ModelOption[]>(PricingService.getModels());
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     const unsubscribe = PricingService.subscribe((summary) => {
       setCosts({ ...summary });
-      setTextModels([...PricingService.getFreeModels()]);
+      setTextModels([...PricingService.getModels()]);
     });
 
-    // Fetch live free models from OpenRouter on mount
-    PricingService.refreshLiveFreeModels().then(() => {
-      setTextModels([...PricingService.getFreeModels()]);
+    // Fetch the live OpenRouter catalog on mount
+    PricingService.refreshLiveModels().then(() => {
+      setTextModels([...PricingService.getModels()]);
     });
 
     return () => {
@@ -36,8 +28,8 @@ export const CostTracker: React.FC = () => {
   const handleRefreshModels = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsRefreshing(true);
-    await PricingService.refreshLiveFreeModels();
-    setTextModels([...PricingService.getFreeModels()]);
+    await PricingService.refreshLiveModels();
+    setTextModels([...PricingService.getModels()]);
     setIsRefreshing(false);
   };
 
@@ -47,9 +39,22 @@ export const CostTracker: React.FC = () => {
     return num.toString();
   };
 
+  const formatCost = (num: number) => {
+    if (!num) return '$0.0000';
+    if (num < 0.01) return `$${num.toFixed(4)}`;
+    return `$${num.toFixed(2)}`;
+  };
+
+  const formatPricing = (model?: ModelOption) => {
+    if (!model || model.isFree) return 'Free';
+    const prompt = model.pricing?.prompt || 0;
+    const completion = model.pricing?.completion || 0;
+    return `${formatCost(prompt)}/M in · ${formatCost(completion)}/M out`;
+  };
+
   const shortModelLabel = (modelId: string) => {
-    if (!modelId) return 'Nemotron 3 Ultra';
-    if (modelId === 'instant-editorial-svg') return 'Automatic Free Art';
+    if (!modelId) return 'Select a model';
+    if (modelId === 'instant-editorial-svg') return 'Automatic Art';
     const parts = modelId.replace(':free', '').split('/');
     return parts[parts.length - 1];
   };
@@ -61,16 +66,16 @@ export const CostTracker: React.FC = () => {
           <div className="flex items-center justify-between border-b border-slate-100 pb-2.5 mb-3">
             <div className="flex items-center gap-2">
               <CheckCircle2 size={15} className="text-emerald-500" />
-              <span className="font-bold text-slate-900 text-sm">OpenRouter Free Models</span>
+              <span className="font-bold text-slate-900 text-sm">OpenRouter Models</span>
               <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                {textModels.length} Free
+                {textModels.length} available
               </span>
             </div>
             <div className="flex items-center gap-1">
               <button
                 onClick={handleRefreshModels}
                 className="min-w-[36px] min-h-[36px] flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                title="Refresh live free models from OpenRouter"
+                title="Refresh the live OpenRouter model catalog"
               >
                 <RefreshCw size={14} className={isRefreshing ? 'animate-spin text-blue-600' : ''} />
               </button>
@@ -87,7 +92,7 @@ export const CostTracker: React.FC = () => {
             <div>
               <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
                 <Cpu size={12} className="text-blue-600" />
-                Writing &amp; Outline AI Model (Free)
+                Writing &amp; Outline AI Model
               </label>
               <select
                 value={costs.selectedTextModel}
@@ -96,20 +101,33 @@ export const CostTracker: React.FC = () => {
               >
                 {textModels.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.name}
+                    {m.isFree ? m.name : `${m.name} — paid`}
                   </option>
                 ))}
               </select>
               <p className="text-[11px] text-slate-400 mt-1 truncate">
                 {textModels.find((m) => m.id === costs.selectedTextModel)?.description || costs.selectedTextModel}
               </p>
+              <p className={`text-[11px] mt-1 font-semibold ${costs.isFreeTier ? 'text-emerald-600' : 'text-amber-600'}`}>
+                {formatPricing(textModels.find((m) => m.id === costs.selectedTextModel))}
+              </p>
             </div>
 
-            <p className="text-xs text-slate-600">Upload your own cover art and chapter illustrations. Artwork uploads do not use AI credits.</p>
+            <p className="text-xs text-slate-600">
+              Paid models are billed to your OpenRouter account. Upload your own cover art and chapter illustrations — artwork uploads do not use AI credits.
+            </p>
 
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-              <span>Session Tokens: {formatTokens(costs.totalTokens)}</span>
-              <span className="text-emerald-700 font-sans font-bold">$0.00 Free Tier</span>
+            <div className="pt-2 border-t border-slate-100 space-y-1 text-[11px] text-slate-500 font-mono">
+              <div className="flex items-center justify-between">
+                <span>Session Tokens: {formatTokens(costs.totalTokens)}</span>
+                <span className={costs.isFreeTier ? 'text-emerald-700 font-sans font-bold' : 'text-amber-700 font-sans font-bold'}>
+                  {formatCost(costs.sessionCost)} session
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>All-time spend</span>
+                <span className="font-sans">{formatCost(costs.totalCost)}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -119,15 +137,15 @@ export const CostTracker: React.FC = () => {
         type="button"
         className="min-h-[40px] bg-white/95 backdrop-blur-md border border-emerald-200 shadow-lg rounded-full px-3.5 py-2 flex items-center gap-2 text-xs font-sans text-slate-700 hover:border-emerald-400 transition-colors cursor-pointer group"
         onClick={() => setIsOpen(!isOpen)}
-        title="Click to choose your Free OpenRouter AI Models"
+        title="Choose your OpenRouter AI model"
       >
         <div className="flex items-center gap-1.5 text-emerald-700 font-semibold">
           <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
           <span className="max-w-[110px] sm:max-w-none truncate">{shortModelLabel(costs.selectedTextModel)}</span>
         </div>
 
-        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0">
-          Free
+        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 ${costs.isFreeTier ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+          {costs.isFreeTier ? 'Free' : 'Paid'}
         </span>
 
         <ChevronUp
