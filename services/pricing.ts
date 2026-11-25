@@ -21,7 +21,19 @@ export interface ModelOption {
   modality?: string;
   isFree?: boolean;
   pricing?: ModelPricing;
+  /** Shortlisted by OpenRouter's most-popular ordering for its role. */
+  recommended?: boolean;
+  popularityRank?: number;
+  /** Model returns an image, so it must run through the Images API. */
+  imageOutput?: boolean;
+  /** Dynamic router (pricing reported as -1); cost is unknown until it runs. */
+  isRouter?: boolean;
+  /** USD cost per generated image, when OpenRouter publishes it. */
+  pricePerImage?: number;
 }
+
+/** The two model roles this app needs: writing books and rendering artwork. */
+export type ModelRole = 'writing' | 'image';
 
 /** @deprecated Use ModelOption. Kept so older imports keep compiling. */
 export type FreeModelOption = ModelOption;
@@ -37,7 +49,10 @@ export interface CostSummary {
 }
 
 export const DEFAULT_TEXT_MODEL = 'google/gemma-4-26b-a4b-it:free';
-export const DEFAULT_COVER_MODEL = 'instant-editorial-svg';
+/** Offline template artwork engine, used only when no paid image model is selected. */
+export const TEMPLATE_COVER_MODEL = 'instant-editorial-svg';
+/** @deprecated Use TEMPLATE_COVER_MODEL. */
+export const DEFAULT_COVER_MODEL = TEMPLATE_COVER_MODEL;
 
 export const FREE_PRICING: ModelPricing = { prompt: 0, completion: 0 };
 
@@ -127,16 +142,14 @@ export const CURATED_MODELS: ModelOption[] = [
     description: 'Automatically routes to the fastest available free model',
     modality: 'text+image->text',
   },
-].map((model) => ({ ...model, pricing: FREE_PRICING, isFree: true }));
-
-export const COVER_ONLY_EXTRA_OPTIONS: ModelOption[] = [
-  {
-    id: 'instant-editorial-svg',
-    name: 'Automatic (Uses Selected Writing Model)',
-    description: 'Uses your selected writing model to create original SVG cover art and chapter illustrations',
-    modality: 'svg',
-  },
-].map((model) => ({ ...model, pricing: FREE_PRICING, isFree: true }));
+].map((model, index) => ({
+  ...model,
+  pricing: FREE_PRICING,
+  isFree: true,
+  imageOutput: false,
+  recommended: index < 5,
+  popularityRank: index,
+}));
 
 const STORAGE_KEY = 'ebookai_cost_history';
 const TEXT_MODEL_KEY = 'ebookai_openrouter_text_model';
@@ -153,16 +166,20 @@ const normalizePricing = (pricing?: Partial<ModelPricing> | null): ModelPricing 
 
 const withPricing = (model: ModelOption): ModelOption => {
   const pricing = normalizePricing(model.pricing);
+  const zeroTokenPrice = pricing.prompt === 0 && pricing.completion === 0;
   return {
     ...model,
     pricing,
-    isFree: pricing.prompt === 0 && pricing.completion === 0,
+    // Image models are priced per image, so zero token prices do not make them free.
+    isFree: model.isFree === false ? false : zeroTokenPrice && !model.isRouter,
   };
 };
 
-/** Free models first, then paid models, each ordered by display name. */
+/** Recommended first (OpenRouter popularity order), then free, then paid by name. */
 const sortModels = (models: ModelOption[]): ModelOption[] =>
   [...models].sort((a, b) => {
+    if (Boolean(a.recommended) !== Boolean(b.recommended)) return a.recommended ? -1 : 1;
+    if (a.recommended && b.recommended) return (a.popularityRank || 0) - (b.popularityRank || 0);
     if (Boolean(a.isFree) !== Boolean(b.isFree)) return a.isFree ? -1 : 1;
     return a.name.localeCompare(b.name);
   });
@@ -171,6 +188,7 @@ export const PricingService = {
   sessionCost: 0,
   lastModelUsed: DEFAULT_TEXT_MODEL,
   models: CURATED_MODELS.map(withPricing) as ModelOption[],
+  imageModels: [] as ModelOption[],
   listeners: new Set<(summary: CostSummary) => void>(),
 
   getSelectedTextModel(): string {
@@ -192,9 +210,9 @@ export const PricingService = {
 
   getSelectedCoverModel(): string {
     try {
-      return localStorage.getItem(COVER_MODEL_KEY) || DEFAULT_COVER_MODEL;
+      return localStorage.getItem(COVER_MODEL_KEY) || '';
     } catch {
-      return DEFAULT_COVER_MODEL;
+      return '';
     }
   },
 
@@ -207,16 +225,39 @@ export const PricingService = {
     this.notifyCurrent();
   },
 
+  hasStoredTextModel(): boolean {
+    try {
+      return Boolean(localStorage.getItem(TEXT_MODEL_KEY));
+    } catch {
+      return false;
+    }
+  },
+
   getModels(): ModelOption[] {
     return this.models;
   },
 
-  getCoverModels(): ModelOption[] {
-    return [...this.models, ...COVER_ONLY_EXTRA_OPTIONS];
+  getImageModels(): ModelOption[] {
+    return this.imageModels;
+  },
+
+  /** The shortlist shown before the user opts into the full catalog. */
+  getRecommendedModels(role: ModelRole = 'writing'): ModelOption[] {
+    return this.getAllModels(role).filter((model) => model.recommended);
+  },
+
+  getAllModels(role: ModelRole = 'writing'): ModelOption[] {
+    return role === 'image' ? this.imageModels : this.models;
+  },
+
+  /** True when the selection must run through OpenRouter's Images API. */
+  isImageModel(modelId: string): boolean {
+    if (!modelId || modelId === TEMPLATE_COVER_MODEL) return false;
+    return this.imageModels.some((model) => model.id === modelId);
   },
 
   getModel(modelId: string): ModelOption | undefined {
-    return this.models.find((model) => model.id === modelId);
+    return this.models.find((model) => model.id === modelId) || this.imageModels.find((model) => model.id === modelId);
   },
 
   getModelPricing(modelId: string): ModelPricing {
@@ -229,37 +270,60 @@ export const PricingService = {
     return modelId === 'openrouter/free' || modelId.endsWith(':free');
   },
 
-  async refreshLiveModels(): Promise<ModelOption[]> {
+  async fetchCatalog(role: ModelRole): Promise<ModelOption[]> {
     try {
-      const res = await fetch('/api/openrouter/models');
-      if (!res.ok) return this.models;
+      const res = await fetch(`/api/openrouter/models?for=${role}`);
+      if (!res.ok) return [];
       const data = await res.json();
-      if (Array.isArray(data.models) && data.models.length > 0) {
-        const merged = new Map<string, ModelOption>();
-        // Seed with curated entries so offline-friendly names/descriptions survive.
-        for (const item of CURATED_MODELS) {
-          merged.set(item.id, withPricing(item));
-        }
-        for (const live of data.models) {
-          if (!live?.id) continue;
-          const existing = merged.get(live.id);
-          merged.set(
-            live.id,
-            withPricing({
-              id: String(live.id),
-              name: live.name || existing?.name || String(live.id),
-              description: live.description || existing?.description || 'OpenRouter model',
-              modality: live.modality || existing?.modality || 'text->text',
-              pricing: live.pricing || existing?.pricing,
-            })
-          );
-        }
-        this.models = sortModels(Array.from(merged.values()));
-        this.notifyCurrent();
-      }
+      if (!Array.isArray(data.models)) return [];
+      return data.models
+        .filter((live: any) => Boolean(live?.id))
+        .map((live: any) =>
+          withPricing({
+            id: String(live.id),
+            name: String(live.name || live.id),
+            description: String(live.description || ''),
+            modality: String(live.modality || (role === 'image' ? 'text->image' : 'text->text')),
+            pricing: live.pricing,
+            recommended: Boolean(live.recommended),
+            popularityRank: Number(live.popularityRank) || 0,
+            imageOutput: Boolean(live.imageOutput) || role === 'image',
+            isRouter: Boolean(live.isRouter),
+            pricePerImage: Number(live.pricePerImage) > 0 ? Number(live.pricePerImage) : undefined,
+            isFree: Boolean(live.isFree),
+          })
+        );
     } catch {
-      // Keep curated list if offline
+      return [];
     }
+  },
+
+  async refreshLiveModels(): Promise<ModelOption[]> {
+    const [writing, images] = await Promise.all([this.fetchCatalog('writing'), this.fetchCatalog('image')]);
+
+    if (writing.length > 0) {
+      const merged = new Map<string, ModelOption>();
+      // Seed with curated entries so offline-friendly names/descriptions survive.
+      // Live rankings own the shortlist, so curated entries stay in the full catalog only.
+      for (const item of CURATED_MODELS) {
+        merged.set(item.id, withPricing({ ...item, recommended: false }));
+      }
+      for (const live of writing) {
+        const existing = merged.get(live.id);
+        merged.set(live.id, {
+          ...live,
+          name: live.name || existing?.name || live.id,
+          description: live.description || existing?.description || 'OpenRouter model',
+        });
+      }
+      this.models = sortModels(Array.from(merged.values()));
+    }
+
+    if (images.length > 0) {
+      this.imageModels = sortModels(images);
+    }
+
+    this.notifyCurrent();
     return this.models;
   },
 
@@ -294,6 +358,16 @@ export const PricingService = {
     this.lastModelUsed = resolved;
     this.sessionCost += cost;
     this.updateStorage(cost, inputCount + outputCount);
+
+    this.notifyCurrent();
+  },
+
+  /** Image models are billed per image, so record OpenRouter's reported cost directly. */
+  trackImageUsage(model: string, costUsd: number) {
+    const cost = Number.isFinite(costUsd) && costUsd > 0 ? costUsd : 0;
+    this.lastModelUsed = model;
+    this.sessionCost += cost;
+    this.updateStorage(cost, 0);
 
     this.notifyCurrent();
   },

@@ -53,3 +53,37 @@ export async function readArtworkFile(file: File): Promise<{ base64: string; wid
     URL.revokeObjectURL(url);
   }
 }
+
+/**
+ * Downscale and re-encode generated artwork to the JPEG base64 shape used by manual uploads,
+ * so projects, PDF export, and EPUB export all treat both sources the same way.
+ */
+export async function normalizeArtworkDataUrl(dataUrl: string): Promise<{ base64: string; width: number; height: number }> {
+  const image = new Image();
+  image.src = dataUrl;
+  try {
+    await image.decode();
+  } catch {
+    throw new Error('The generated image could not be opened. Please try again.');
+  }
+
+  const width = image.naturalWidth || 0;
+  const height = image.naturalHeight || 0;
+  if (!width || !height) throw new Error('The generated image has no usable dimensions. Please try again.');
+
+  const size = artworkDimensions(width, height);
+  const canvas = document.createElement('canvas');
+  canvas.width = size.width;
+  canvas.height = size.height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Your browser could not prepare this image. Please reload and retry.');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, size.width, size.height);
+  context.drawImage(image, 0, 0, size.width, size.height);
+
+  const normalized = canvas.toDataURL('image/jpeg', 0.92);
+  if (!normalized.startsWith('data:image/jpeg;base64,')) {
+    throw new Error('Your browser could not save the generated image. Please try again.');
+  }
+  return { base64: normalized.slice(normalized.indexOf(',') + 1), ...size };
+}

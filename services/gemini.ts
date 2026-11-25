@@ -12,7 +12,6 @@ import {
 import { buildChapterPrompt, buildOutlinePrompt, buildRefinementPrompt, formatSources, isNonfiction, type WritingOptions } from "./prompts";
 import { PricingService } from "./pricing";
 import { BackgroundKeeper } from "./backgroundKeeper";
-import { prepareIllustrationSvg } from './illustrations';
 import { readApiJson } from './http';
 
 // Non-throttled delay via Web Worker so background tabs don't stall
@@ -32,6 +31,9 @@ export const formatImageSrc = (imgData?: string): string => {
   }
   if (trimmed.startsWith('iVBOR')) {
     return `data:image/png;base64,${trimmed}`;
+  }
+  if (trimmed.startsWith('UklGR')) {
+    return `data:image/webp;base64,${trimmed}`;
   }
   return `data:image/jpeg;base64,${trimmed}`;
 };
@@ -560,35 +562,48 @@ export const generateOutline = async (
   return parsed;
 };
 
+export interface GeneratedImage {
+  /** Ready-to-display data URL. */
+  dataUrl: string;
+  /** Raw payload for project storage and exports. */
+  base64: string;
+  mimeType: string;
+}
+
+/**
+ * Render cover or chapter artwork with the selected OpenRouter image model.
+ * Image models bill per image, so OpenRouter's reported cost is recorded directly.
+ */
 export const generateImage = async (
   prompt: string,
-  aspectRatio: "1:1" | "3:4" | "4:3" | "16:9" | "9:16" = "1:1",
-  customModel?: string,
-  purpose: 'template' | 'cover' | 'chapter' = 'template'
-): Promise<string> => {
-  if (purpose !== 'template') {
-    // The instant cover engine is a template, not a chapter-aware AI illustrator.
-    const model = customModel && customModel !== 'instant-editorial-svg' ? customModel : PricingService.getSelectedTextModel();
-    const data = await fetchApiJson('/api/gemini/generate-text', { parts: [{ text: prompt }], model });
-    if (data.usage) PricingService.trackUsage(data.model || model, data.usage.promptTokenCount || 0, data.usage.candidatesTokenCount || 0);
-    const svg = prepareIllustrationSvg(data.text || '', purpose === 'cover' ? 600 : 800, purpose === 'cover' ? 800 : 450);
-    const bytes = new TextEncoder().encode(svg);
-    let binary = '';
-    for (const byte of bytes) binary += String.fromCharCode(byte);
-    return `data:image/svg+xml;base64,${btoa(binary)}`;
+  aspectRatio: "1:1" | "3:4" | "4:3" | "16:9" | "9:16" = "3:4",
+  imageModel?: string
+): Promise<GeneratedImage> => {
+  const model = imageModel || PricingService.getSelectedCoverModel();
+  if (!model) {
+    throw new Error('Choose an image model in the project settings before generating artwork.');
   }
-  const model = customModel || PricingService.getSelectedCoverModel();
-  const data = await fetchApiJson('/api/gemini/image', { prompt, aspectRatio, model });
-  if (!data.base64) {
+
+  const data = await fetchApiJson('/api/gemini/image', {
+    prompt,
+    aspectRatio,
+    model,
+    // Image-output models are only served by OpenRouter's Images API.
+    ...(PricingService.isImageModel(model) ? { engine: 'images' } : {}),
+  });
+
+  const base64 = typeof data.base64 === 'string' ? data.base64 : '';
+  if (!base64) {
     throw new Error(data.error || 'Failed to generate image.');
   }
 
-  PricingService.trackUsage(
-    data.model || model,
-    data.usage?.promptTokenCount || 1,
-    data.usage?.candidatesTokenCount || 0
-  );
-  return data.base64;
+  const mimeType = typeof data.mimeType === 'string' && data.mimeType ? data.mimeType : 'image/png';
+  const cost = Number(data.usage?.cost);
+  if (Number.isFinite(cost) && cost > 0) {
+    PricingService.trackImageUsage(data.model || model, cost);
+  }
+
+  return { dataUrl: `data:${mimeType};base64,${base64}`, base64, mimeType };
 };
 
 export interface ChapterWriteOptions extends WritingOptions {

@@ -7,6 +7,7 @@ import { ArtworkUpload } from './ArtworkUpload';
 import { ChevronLeft, ChevronRight, Loader2, Download, PenLine, Save, Headphones, Play, Square, FileText, Wand2, Menu, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { generateSpeech, refineChapterText } from '../services/gemini';
+import { buildChapterArtPrompt, buildCoverArtPrompt } from '../services/illustrations';
 import { Notification } from './Notification';
 import { CloudService } from '../services/cloud';
 import { generateBookPdf } from '../services/pdf';
@@ -18,6 +19,7 @@ interface BookReaderProps {
   sources?: Source[];
   customInstruction?: string;
   textModel?: string;
+  coverModel?: string;
   outline: BookOutline;
   chapters: ChapterContent[];
   onChapterUpdate?: (chapter: ChapterContent, updates?: Partial<ChapterContent>) => void;
@@ -90,7 +92,7 @@ async function decodeAudioData(
 
 export const BookReader: React.FC<BookReaderProps> = ({ 
   coverArtPrompt = '', onCoverArtPromptChange,
-  writingStyle, sources, customInstruction, textModel,
+  writingStyle, sources, customInstruction, textModel, coverModel,
   outline, 
   chapters, 
   onChapterUpdate, 
@@ -312,7 +314,8 @@ export const BookReader: React.FC<BookReaderProps> = ({
 
           {/* Book Cover in Sidebar */}
           <div className="p-4 border-b border-slate-100 space-y-4 bg-white overflow-y-auto max-h-[65dvh]">
-            <ArtworkUpload kind="cover" image={outline.coverImage} onChange={image => onCoverArtworkChange?.(image)} disabled={!onCoverArtworkChange} />
+            <ArtworkUpload kind="cover" image={outline.coverImage} onChange={image => onCoverArtworkChange?.(image)} disabled={!onCoverArtworkChange}
+              generate={{ prompt: buildCoverArtPrompt(outline, coverArtPrompt), imageModel: coverModel || '', aspectRatio: '3:4' }} />
             {onCoverArtPromptChange && <ArtDirectionInput label="Cover Art Prompt" value={coverArtPrompt} onChange={onCoverArtPromptChange} />}
           </div>
 
@@ -520,6 +523,7 @@ export const BookReader: React.FC<BookReaderProps> = ({
                                  <div className="not-prose my-6 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-6">
                                    <ArtworkUpload key={currentChapter.chapterNumber} kind="chapter" image={currentChapter.image}
                                      alt={`Illustration for ${currentChapter.title}`} disabled={!onChapterUpdate || currentChapter.isGenerating}
+                                     generate={{ prompt: buildChapterArtPrompt(currentChapter, outline, writingStyle), imageModel: coverModel || '', aspectRatio: '16:9' }}
                                      onChange={image => onChapterUpdate?.({ ...currentChapter, image }, { image })} />
                                    {onChapterUpdate && <ArtDirectionInput label="Chapter Illustration Prompt" value={currentChapter.illustrationPrompt || ''}
                                      disabled={currentChapter.isGenerating}

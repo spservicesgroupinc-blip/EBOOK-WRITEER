@@ -486,6 +486,81 @@ async function runOpenRouterChat(userContent: string, requestedModel?: string) {
   throw lastErr || new Error('OpenRouter model request failed. Please try again or choose another model.');
 }
 
+/**
+ * Generate real artwork through OpenRouter's Images API.
+ * Image-output models are not served by /chat/completions, so they need this route.
+ */
+async function runOpenRouterImage(prompt: string, aspectRatio: string, model: string) {
+  const apiKey = resolveOpenRouterApiKey();
+  if (!apiKey) {
+    throw Object.assign(
+      new Error(
+        'OPENROUTER_API_KEY is missing. In Vercel, go to Project Settings -> Environment Variables, add OPENROUTER_API_KEY, and redeploy.'
+      ),
+      { status: 500 }
+    );
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/images', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://ebook-ai.vercel.app',
+        'X-Title': 'Ebook.AI',
+      },
+      body: JSON.stringify({
+        model,
+        prompt,
+        aspect_ratio: aspectRatio,
+        n: 1,
+      }),
+      signal: controller.signal,
+    });
+
+    const rawBody = await response.text();
+    let data: any = {};
+    try {
+      data = JSON.parse(rawBody);
+    } catch {
+      throw Object.assign(new Error(`OpenRouter image API returned a non-JSON response (HTTP ${response.status}).`), {
+        status: 502,
+      });
+    }
+
+    if (!response.ok || data?.error) {
+      const message = data?.error?.message || `OpenRouter image API failed (HTTP ${response.status}).`;
+      throw Object.assign(new Error(message), { status: response.ok ? 502 : response.status });
+    }
+
+    const image = Array.isArray(data?.data) ? data.data[0] : null;
+    const base64 = String(image?.b64_json || '');
+    if (!base64) {
+      throw Object.assign(new Error('OpenRouter did not return image data. Choose another image model.'), { status: 502 });
+    }
+
+    return {
+      base64,
+      mimeType: String(image?.media_type || 'image/png'),
+      usage: {
+        promptTokenCount: Number(data?.usage?.prompt_tokens || 0),
+        candidatesTokenCount: Number(data?.usage?.completion_tokens || 0),
+        cost: Number(data?.usage?.cost || 0),
+      },
+    };
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw Object.assign(new Error('Image generation timed out. Try a faster image model.'), { status: 504 });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 const escapeXml = (unsafe: string): string =>
   String(unsafe || '')
     .replace(/&/g, '&amp;')
@@ -668,6 +743,83 @@ function sendJson(res: any, statusCode: number, payload: any) {
   res.end(JSON.stringify(payload));
 }
 
+/** How many models the pickers offer before the user opts into the full catalog. */
+const RECOMMENDED_MODEL_COUNT = 5;
+
+/** OpenRouter prices are per token; `-1` marks a dynamic router with unknown cost. */
+const perMillionTokens = (value: any): number => {
+  const perToken = parseFloat(String(value));
+  return Number.isFinite(perToken) && perToken > 0 ? perToken * 1_000_000 : 0;
+};
+
+const isRouterPrice = (value: any): boolean => parseFloat(String(value)) === -1;
+
+/**
+ * Map an OpenRouter catalog response into the app's model shape.
+ * `rawList` arrives in OpenRouter's most-popular order, so the first few eligible
+ * models become the recommended shortlist (one per provider family, plus one free pick).
+ */
+export function buildModelCatalog(rawList: any[], forImage: boolean) {
+  const seenFamilies = new Set<string>();
+  // Writing keeps one paid slot open for the free pick so the app works without credits.
+  const paidLimit = forImage ? RECOMMENDED_MODEL_COUNT : RECOMMENDED_MODEL_COUNT - 1;
+  let paidRecommended = 0;
+  let freeRecommended = false;
+
+  return rawList
+    .filter((model: any) => {
+      const id = String(model?.id || '');
+      if (!id) return false;
+      if (id.includes('content-safety') || id.includes('lyria')) return false;
+      if (id.endsWith(':batch')) return false;
+      // Free image variants are rate-limited and cannot render covers reliably.
+      if (forImage && id.endsWith(':free')) return false;
+      return true;
+    })
+    .map((model: any, index: number) => {
+      const id = String(model.id);
+      const router = isRouterPrice(model?.pricing?.prompt) || isRouterPrice(model?.pricing?.completion);
+      const prompt = perMillionTokens(model?.pricing?.prompt);
+      const completion = perMillionTokens(model?.pricing?.completion);
+      const perImage = parseFloat(String(model?.pricing?.image));
+      const outputModalities = Array.isArray(model?.architecture?.output_modalities)
+        ? model.architecture.output_modalities.map((value: any) => String(value))
+        : [];
+      const imageOutput = forImage || outputModalities.includes('image');
+      // Image models are priced per image, so token prices of zero do not make them free.
+      const isFree = forImage ? id.endsWith(':free') : !router && prompt === 0 && completion === 0;
+      const family = id.split('/')[0] || id;
+
+      let recommended = false;
+      if (!router && !seenFamilies.has(family)) {
+        if (isFree) {
+          if (!forImage && !freeRecommended) {
+            recommended = true;
+            freeRecommended = true;
+          }
+        } else if (paidRecommended < paidLimit) {
+          recommended = true;
+          paidRecommended += 1;
+        }
+      }
+      if (recommended) seenFamilies.add(family);
+
+      return {
+        id,
+        name: String(model.name || model.id),
+        description: String(model.description || '').slice(0, 140) || 'OpenRouter AI Model',
+        modality: String(model.architecture?.modality || (forImage ? 'text->image' : 'text->text')),
+        isFree,
+        isRouter: router,
+        imageOutput,
+        popularityRank: index,
+        recommended,
+        pricing: { prompt, completion },
+        ...(Number.isFinite(perImage) && perImage > 0 ? { pricePerImage: perImage } : {}),
+      };
+    });
+}
+
 export default async function handler(req: any, res: any) {
   const url = String(req.originalUrl || req.url || '');
 
@@ -690,46 +842,26 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    // 0. Live OpenRouter Models Catalog (free and paid, with pricing)
+    // 0. Live OpenRouter Models Catalog (recommended shortlist + full catalog)
     if (url.includes('/openrouter/models')) {
+      const forImage = /[?&]for=image(?:&|$)/.test(url);
       try {
-        const response = await fetch('https://openrouter.ai/api/v1/models');
+        const query = new URLSearchParams({ sort: 'most-popular', limit: '1000' });
+        if (forImage) {
+          query.set('output_modalities', 'image');
+        } else {
+          query.set('output_modalities', 'text');
+          query.set('endpoints', '/api/v1/chat/completions');
+        }
+
+        const response = await fetch(`https://openrouter.ai/api/v1/models?${query.toString()}`);
         if (!response.ok) {
           return sendJson(res, 200, { models: [] });
         }
         const data: any = await response.json();
         const rawList = Array.isArray(data?.data) ? data.data : [];
 
-        const toPerMillion = (value: any): number => {
-          const perToken = parseFloat(String(value));
-          return Number.isFinite(perToken) && perToken > 0 ? perToken * 1_000_000 : 0;
-        };
-
-        const models = rawList
-          .filter((m: any) => {
-            const id = String(m?.id || '');
-            if (!id) return false;
-            if (id.includes('content-safety') || id.includes('lyria')) return false;
-            return true;
-          })
-          .map((m: any) => {
-            const prompt = toPerMillion(m?.pricing?.prompt);
-            const completion = toPerMillion(m?.pricing?.completion);
-            return {
-              id: String(m.id),
-              name: String(m.name || m.id),
-              description: String(m.description || '').slice(0, 140) || 'OpenRouter AI Model',
-              modality: String(m.architecture?.modality || 'text->text'),
-              isFree: prompt === 0 && completion === 0,
-              pricing: { prompt, completion },
-            };
-          })
-          .sort((a: any, b: any) => {
-            if (a.isFree !== b.isFree) return a.isFree ? -1 : 1;
-            return String(a.name).localeCompare(String(b.name));
-          });
-
-        return sendJson(res, 200, { models });
+        return sendJson(res, 200, { models: buildModelCatalog(rawList, forImage) });
       } catch {
         return sendJson(res, 200, { models: [] });
       }
@@ -858,7 +990,7 @@ Conform to this exact JSON structure:
 
     // 5. Generate Image
     if (url.includes('/gemini/image')) {
-      const { prompt = '', aspectRatio = '1:1', model = OPENROUTER_MODEL } = body || {};
+      const { prompt = '', aspectRatio = '1:1', model = OPENROUTER_MODEL, engine = '' } = body || {};
       const isCover = aspectRatio === '3:4';
       const width = isCover ? 600 : aspectRatio === '16:9' ? 800 : 600;
       const height = isCover ? 800 : aspectRatio === '16:9' ? 450 : 600;
@@ -871,6 +1003,19 @@ Conform to this exact JSON structure:
           mimeType: 'image/svg+xml',
           model: 'instant-editorial-svg',
         });
+      }
+
+      // Image-output models only work through the dedicated Images API.
+      if (engine === 'images') {
+        try {
+          const image = await runOpenRouterImage(String(prompt), String(aspectRatio), String(model));
+          return sendJson(res, 200, { ...image, model });
+        } catch (error: any) {
+          const status = Number(error?.status);
+          return sendJson(res, Number.isFinite(status) && status >= 400 && status < 600 ? status : 502, {
+            error: error?.message || 'Image generation failed. Try another image model.',
+          });
+        }
       }
 
       try {

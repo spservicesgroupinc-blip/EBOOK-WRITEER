@@ -36,6 +36,71 @@ const WRITING_STYLES: {id: WritingStyle, name: string, description: string}[] = 
   { id: 'simple', name: 'Accessible', description: 'Easy to read, simple vocabulary, direct.' },
 ];
 
+const SHOW_ALL_MODELS_KEY = 'ebookai_show_all_models';
+
+const readShowAllModels = (): boolean => {
+  try {
+    return localStorage.getItem(SHOW_ALL_MODELS_KEY) === 'true';
+  } catch {
+    return false;
+  }
+};
+
+const modelPriceLabel = (model: ModelOption): string => {
+  if (model.imageOutput) {
+    return model.pricePerImage ? `≈ $${model.pricePerImage.toFixed(2)}/image` : 'paid per image';
+  }
+  if (model.isFree) return 'free';
+  return `$${(model.pricing?.prompt || 0).toFixed(2)}/M input`;
+};
+
+const modelLabel = (model: ModelOption): string => `${model.name} — ${modelPriceLabel(model)}`;
+
+/** Renders the recommended shortlist, expanding to the full catalog on request. */
+const ModelOptions: React.FC<{ models: ModelOption[]; selectedId: string; showAll: boolean }> = ({
+  models,
+  selectedId,
+  showAll,
+}) => {
+  if (models.length === 0) {
+    return <option value="" disabled>Loading OpenRouter models…</option>;
+  }
+
+  const recommended = models.filter((model) => model.recommended);
+  const others = models.filter((model) => !model.recommended);
+  const selected = models.find((model) => model.id === selectedId);
+  const showSelectedFallback = !showAll && Boolean(selectedId) && !recommended.some((model) => model.id === selectedId);
+
+  return (
+    <>
+      {showSelectedFallback && (
+        <option value={selectedId}>{selected ? modelLabel(selected) : selectedId}</option>
+      )}
+      {recommended.length > 0 && (
+        <optgroup label="Recommended">
+          {recommended.map((model) => (
+            <option key={model.id} value={model.id}>{modelLabel(model)}</option>
+          ))}
+        </optgroup>
+      )}
+      {showAll && others.some((model) => model.isFree) && (
+        <optgroup label="Other free models">
+          {others.filter((model) => model.isFree).map((model) => (
+            <option key={model.id} value={model.id}>{modelLabel(model)}</option>
+          ))}
+        </optgroup>
+      )}
+      {showAll && others.some((model) => !model.isFree) && (
+        <optgroup label="Paid models">
+          {others.filter((model) => !model.isFree).map((model) => (
+            <option key={model.id} value={model.id}>{modelLabel(model)}</option>
+          ))}
+        </optgroup>
+      )}
+    </>
+  );
+};
+
 export const ProjectEditor: React.FC<ProjectEditorProps> = ({ 
   project, 
   onUpdateProject, 
@@ -55,22 +120,68 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
   const [researchWarnings, setResearchWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [textModels, setTextModels] = useState<ModelOption[]>(PricingService.getModels());
+  const [imageModels, setImageModels] = useState<ModelOption[]>(PricingService.getImageModels());
+  const [showAllModels, setShowAllModels] = useState<boolean>(readShowAllModels);
   const [selectedTextModel, setSelectedTextModel] = useState<string>(
     project.settings?.textModel || PricingService.getSelectedTextModel()
   );
+  const [selectedCoverModel, setSelectedCoverModel] = useState<string>(
+    project.settings?.coverModel || PricingService.getSelectedCoverModel()
+  );
+  const selectedTextOption = PricingService.getModel(selectedTextModel);
+  const selectedCoverOption = PricingService.getModel(selectedCoverModel);
 
   useEffect(() => {
-    const unsubscribe = PricingService.subscribe((summary) => {
-      setSelectedTextModel(summary.selectedTextModel);
+    const unsubscribe = PricingService.subscribe(() => {
       setTextModels([...PricingService.getModels()]);
+      setImageModels([...PricingService.getImageModels()]);
     });
     PricingService.refreshLiveModels().then(() => {
       setTextModels([...PricingService.getModels()]);
+      setImageModels([...PricingService.getImageModels()]);
+
+      // First run: land on the recommended shortlist instead of an unlisted default.
+      if (!projectRef.current.settings?.textModel && !PricingService.hasStoredTextModel()) {
+        const firstWriting = PricingService.getRecommendedModels('writing')[0];
+        if (firstWriting) {
+          setSelectedTextModel(firstWriting.id);
+          PricingService.setSelectedTextModel(firstWriting.id);
+        }
+      }
+
+      setSelectedCoverModel((current) => {
+        if (current) return current;
+        const firstImage = PricingService.getRecommendedModels('image')[0];
+        if (!firstImage) return '';
+        PricingService.setSelectedCoverModel(firstImage.id);
+        return firstImage.id;
+      });
     });
     return () => {
       unsubscribe();
     };
   }, []);
+
+  const handleTextModelChange = (value: string) => {
+    setSelectedTextModel(value);
+    PricingService.setSelectedTextModel(value);
+    updateProject({ settings: { ...projectRef.current.settings, textModel: value } });
+  };
+
+  const handleCoverModelChange = (value: string) => {
+    setSelectedCoverModel(value);
+    PricingService.setSelectedCoverModel(value);
+    updateProject({ settings: { ...projectRef.current.settings, coverModel: value } });
+  };
+
+  const toggleShowAllModels = (next: boolean) => {
+    setShowAllModels(next);
+    try {
+      localStorage.setItem(SHOW_ALL_MODELS_KEY, String(next));
+    } catch {
+      // ignore storage errors
+    }
+  };
 
   // Sync title state if project changes externally
   useEffect(() => {
@@ -366,42 +477,62 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                  </div>
 
                  {/* OpenRouter AI Model Selectors */}
-                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-200/80">
-                   <div>
-                     <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
-                       <Cpu size={14} className="text-blue-600" />
-                       OpenRouter Writing &amp; Outline Model
-                     </label>
-                     <select
-                       value={selectedTextModel}
-                       onChange={(e) => {
-                         const val = e.target.value;
-                         setSelectedTextModel(val);
-                         PricingService.setSelectedTextModel(val);
-                         updateProject({ settings: { ...project.settings, textModel: val } });
-                       }}
-                       className="w-full bg-white border border-slate-200 text-slate-800 text-sm rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 font-medium"
-                     >
-                       {textModels.map((m) => (
-                         <option key={m.id} value={m.id}>
-                           {m.isFree ? m.name : `${m.name} — paid`}
-                         </option>
-                       ))}
-                     </select>
-                     <p className="text-[11px] text-slate-500 mt-1">
-                       {textModels.find((m) => m.id === selectedTextModel)?.description || 'OpenRouter model'}
-                     </p>
-                     <p className="text-[11px] text-slate-500 mt-0.5">
-                       {PricingService.isModelFree(selectedTextModel)
-                         ? 'Free on OpenRouter — no charge for generation.'
-                         : 'Paid model — usage is billed to your OpenRouter account.'}
-                     </p>
+                 <div className="space-y-3 pt-2 border-t border-slate-200/80">
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                     <div>
+                       <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
+                         <Cpu size={14} className="text-blue-600" />
+                         Writing &amp; Outline Model
+                       </label>
+                       <select
+                         value={selectedTextModel}
+                         onChange={(e) => handleTextModelChange(e.target.value)}
+                         className="w-full bg-white border border-slate-200 text-slate-800 text-sm rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                       >
+                         <ModelOptions models={textModels} selectedId={selectedTextModel} showAll={showAllModels} />
+                       </select>
+                       <p className="text-[11px] text-slate-500 mt-1">
+                         {selectedTextOption?.description || 'Drafts outlines and chapters with your sources.'}
+                       </p>
+                       <p className="text-[11px] text-slate-500 mt-0.5">
+                         {PricingService.isModelFree(selectedTextModel)
+                           ? 'Free on OpenRouter — no charge for writing.'
+                           : 'Paid model — usage is billed to your OpenRouter account.'}
+                       </p>
+                     </div>
+
+                     <div>
+                       <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
+                         <Wand2 size={14} className="text-blue-600" />
+                         Cover &amp; Illustration Model
+                       </label>
+                       <select
+                         value={selectedCoverModel}
+                         onChange={(e) => handleCoverModelChange(e.target.value)}
+                         className="w-full bg-white border border-slate-200 text-slate-800 text-sm rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                       >
+                         <ModelOptions models={imageModels} selectedId={selectedCoverModel} showAll={showAllModels} />
+                       </select>
+                       <p className="text-[11px] text-slate-500 mt-1">
+                         Paid image models render covers and chapter illustrations from your art direction prompts. Free text models cannot produce images.
+                       </p>
+                       <p className="text-[11px] text-slate-500 mt-0.5">
+                         {selectedCoverOption
+                           ? `${modelPriceLabel(selectedCoverOption)} — billed per generated image.`
+                           : 'No image model loaded yet. Connect to OpenRouter and reopen this screen.'}
+                       </p>
+                     </div>
                    </div>
 
-                   <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-700">
-                     <p className="font-bold mb-1">Your Book Artwork</p>
-                     <p>Upload finished cover art in the outline or reader, and illustrations above each chapter. Artwork uploads are free.</p>
-                   </div>
+                   <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                     <input
+                       type="checkbox"
+                       checked={showAllModels}
+                       onChange={(e) => toggleShowAllModels(e.target.checked)}
+                       className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                     />
+                     Show all OpenRouter models (advanced)
+                   </label>
                  </div>
 
                  {/* Two-Pass Generation Toggle */}
@@ -451,6 +582,7 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
                <OutlineBuilder 
                  coverArtPrompt={project.settings?.coverArtPrompt || ''}
                  onCoverArtPromptChange={coverArtPrompt => updateProject({ settings: { ...projectRef.current.settings, coverArtPrompt } })}
+                 coverModel={selectedCoverModel}
                  nonfiction={nonfiction}
                  outline={project.outline} 
                  isGenerating={isProcessing}
@@ -484,6 +616,7 @@ export const ProjectEditor: React.FC<ProjectEditorProps> = ({
               sources={project.sources}
               customInstruction={project.customInstruction}
               textModel={selectedTextModel}
+              coverModel={selectedCoverModel}
               outline={project.outline} 
               chapters={project.chapters} 
               selectedVoice={project.audioVoice || 'Kore'}

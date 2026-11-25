@@ -3,11 +3,13 @@ import React, { useState } from 'react';
 import { BookOutline, ChapterOutline, LoreVault } from '../types';
 import { ArtDirectionInput } from './ArtDirectionInput';
 import { ArtworkUpload } from './ArtworkUpload';
+import { buildCoverArtPrompt } from '../services/illustrations';
 import { Sparkles, RefreshCw, Pencil, Check, X, Loader2, Plus, Trash2, BookMarked, UserCheck, Globe, KeyRound } from 'lucide-react';
 
 interface OutlineBuilderProps {
   coverArtPrompt?: string;
   onCoverArtPromptChange?: (prompt: string) => void;
+  coverModel?: string;
   nonfiction?: boolean;
   outline: BookOutline;
   isGenerating: boolean;
@@ -18,6 +20,7 @@ interface OutlineBuilderProps {
 
 export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({ 
   coverArtPrompt = '', onCoverArtPromptChange,
+  coverModel,
   outline, nonfiction = false,
   isGenerating, 
   onRegenerate,
@@ -174,7 +177,8 @@ export const OutlineBuilder: React.FC<OutlineBuilderProps> = ({
         )}
 
         <div className="mt-8 max-w-xl mx-auto rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-6">
-          <ArtworkUpload kind="cover" image={outline.coverImage} onChange={onCoverArtworkChange} disabled={isGenerating} />
+          <ArtworkUpload kind="cover" image={outline.coverImage} onChange={onCoverArtworkChange} disabled={isGenerating}
+            generate={{ prompt: buildCoverArtPrompt(outline, coverArtPrompt), imageModel: coverModel || '', aspectRatio: '3:4' }} />
         </div>
       </div>
 
